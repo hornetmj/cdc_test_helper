@@ -435,7 +435,7 @@ fetch_schema_info (char *query)
 
       class_oid_2 = convert_class_oid_to_uint64 (class_oid);
 
-#if 1
+#if 0
       printf ("class_name: %s, class_oid: %s, class_oid_2: %lld\n", class_name, class_oid, class_oid_2);
 #endif
 
