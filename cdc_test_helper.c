@@ -170,9 +170,9 @@ process_command_line_option (int argc, char *argv[])
   init_helper_global ();
 
   // use the getopt() later.
-  for (int i = 1; i < argc - 1; i++)
+  for (int i = 1; i < argc; i++)
     {
-      if (strncmp (argv[i], "--help", strlen ("--help") == 0) || strncmp (argv[i], "-h", strlen ("-h") == 0))
+      if (strncmp (argv[i], "--help", strlen ("--help")) == 0 || strncmp (argv[i], "-h", strlen ("-h")) == 0)
 	{
 	  goto print_usages;
 	}
@@ -242,11 +242,16 @@ process_command_line_option (int argc, char *argv[])
 	}
       else
 	{
-	  goto print_usages;
+	  if (i == argc - 1)
+	    {
+	      helper_Gl.database_name = strdup (argv[argc - 1]);
+	    }
+	  else
+	    {
+	      goto print_usages;
+	    }
 	}
     }
-
-  helper_Gl.database_name = strdup (argv[argc - 1]);
 
   if (helper_Gl.cdc_server_ip == NULL)
     {
@@ -1714,14 +1719,3 @@ error:
 
   return YES_ERROR;
 }
-
-#if 0
-1. ? ? ? 령행인자처리--source DB ? ? ? 속정보-- -ip, port, db user,
-  pw-- cubrid_log_set_ *
-  설정가능한모든정보--target DB ? ? ? 속정보2. ? ? ?
-  키마추출--cci ? ? ? 속--_db_class ? ? ? 회->cdc ? ? ? 뉴얼참고--class ? ? ? 보저장->
-  class oid ? ? ? 키로사용(vector ? ? ? 는libcubridcs.so ? ? ? 서이용가능한자료구조활용)
-     3. cdc ? ? ? 출--LOG_ITEM ? ? ? 력(데이터타입별처리가능해야함)-- - raw format-- -
-  sql format-- transaction ? ? ? 그룹핑가능해야함--LOG_ITEM->
-  sql ? ? ? 환가능해야함4. target DB ? ? ? 반영--cci program
-#endif
