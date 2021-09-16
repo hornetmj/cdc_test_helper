@@ -42,13 +42,20 @@ enum
   DATETIMELTZ = 39
 };
 
-typedef struct src_db_global SRC_DB_GLOBAL;
-struct src_db_global
+typedef struct helper_global HELPER_GLOBAL;
+struct helper_global
 {
-  char *host;
-  char *port;
-  char *user;
-  char *pw;
+  char *cdc_server_ip;
+  int cdc_server_port;
+
+  char *broker_ip;
+  int broker_port;
+
+  char *dba_user;
+  char *dba_passwd;
+  char *database_name;
+
+  int print_log_item;
 
   int connection_timeout;	// -1 ~ 360 (def: 300)
   int extraction_timeout;	// -1 ~ 360 (def: 300)
@@ -64,9 +71,6 @@ struct src_db_global
   char *trace_path;
   int trace_level;
   int trace_size;
-
-  int conn_handle;
-  int req_handle;
 };
 
 typedef struct target_db_global TARGET_DB_GLOBAL;
@@ -111,19 +115,48 @@ struct class_info_global
   int class_info_size;
 };
 
-SRC_DB_GLOBAL src_db_Gl;
+HELPER_GLOBAL helper_Gl;
 TARGET_DB_GLOBAL target_db_Gl;
 
 CLASS_INFO_GLOBAL class_info_Gl;
 
 void
+init_helper_global (void)
+{
+  helper_Gl.cdc_server_ip = NULL;
+  helper_Gl.cdc_server_port = 1523;
+  helper_Gl.connection_timeout = 300;
+  helper_Gl.extraction_timeout = 300;
+  helper_Gl.max_log_item = 512;
+  helper_Gl.all_in_cond = 0;
+
+  helper_Gl.broker_ip = NULL;
+  helper_Gl.broker_port = 33000;
+
+  helper_Gl.dba_user = NULL;
+  helper_Gl.dba_passwd = NULL;
+  helper_Gl.database_name = NULL;
+
+  helper_Gl.print_log_item = 0;
+}
+
+void
 print_usages (void)
 {
-  // printf ("cdc_test_helper\n");
-  // s_host=
-  // s_port=
-  // s_user=
-  // s_pw=
+  printf ("cdc_test_helper [<option_list>] database-name\n\n");
+  printf ("Available options:\n");
+  printf ("\t--cdc-server-ip=[IP Address]          (default: 127.0.0.1)\n");
+  printf ("\t--cdc-server-port=[Port Number]       (default: 1523)\n");
+  printf ("\t--cdc-connection-timeout=[[-1 - 360]] (default: 300)\n");
+  printf ("\t--cdc-extraction-timeout=[[-1 - 360]] (default: 300)\n");
+  printf ("\t--cdc-max-log-item=[[1 - 1024]]       (default: 512)\n");
+  printf ("\t--cdc-all-in-cond=[(0|1)]             (default: 0)\n");
+  printf ("\t--broker-ip=[IP Address]              (default: 127.0.0.1)\n");
+  printf ("\t--broker-port=[Port Number]           (default: 33000)\n");
+  printf ("\t--user=[DBA User]                     (default: dba)\n");
+  printf ("\t--password=[DBA Password]             (default: NULL)\n");
+  printf ("\t--print-log-item                      (default: off)\n");
+  printf ("\n");
 }
 
 int
@@ -131,10 +164,116 @@ process_command_line_option (int argc, char *argv[])
 {
   if (argc == 1)
     {
-      print_usages ();
+      goto print_usages;
+    }
+
+  init_helper_global ();
+
+  // use the getopt() later.
+  for (int i = 1; i < argc - 1; i++)
+    {
+      if (strncmp (argv[i], "--help", strlen ("--help") == 0) || strncmp (argv[i], "-h", strlen ("-h") == 0))
+	{
+	  goto print_usages;
+	}
+      else if (strncmp (argv[i], "--cdc-server-ip=", strlen ("--cdc-server-ip=")) == 0)
+	{
+	  helper_Gl.cdc_server_ip = strdup (argv[i] + strlen ("--cdc-server-ip="));
+	}
+      else if (strncmp (argv[i], "--cdc-server-port=", strlen ("--cdc-server-port=")) == 0)
+	{
+	  helper_Gl.cdc_server_port = atoi (argv[i] + strlen ("--cdc-server-port="));
+	}
+      else if (strncmp (argv[i], "--cdc-connection-timeout=", strlen ("--cdc-connection-timeout=")) == 0)
+	{
+	  helper_Gl.connection_timeout = atoi (argv[i] + strlen ("--cdc-connection-timeout="));
+
+	  if (helper_Gl.connection_timeout < -1 || helper_Gl.connection_timeout > 360)
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--cdc-extraction-timeout=", strlen ("--cdc-extraction-timeout=")) == 0)
+	{
+	  helper_Gl.extraction_timeout = atoi (argv[i] + strlen ("--cdc-extraction-timeout="));
+
+	  if (helper_Gl.extraction_timeout < -1 || helper_Gl.extraction_timeout > 360)
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--cdc-max-log-item=", strlen ("--cdc-max-log-item=")) == 0)
+	{
+	  helper_Gl.max_log_item = atoi (argv[i] + strlen ("--cdc-max-log-item="));
+
+	  if (helper_Gl.max_log_item < 1 || helper_Gl.max_log_item > 1024)
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--cdc-all-in-cond=", strlen ("--cdc-all-in-cond=")) == 0)
+	{
+	  helper_Gl.all_in_cond = atoi (argv[i] + strlen ("--cdc-all-in-cond="));
+
+	  if (helper_Gl.all_in_cond != 0 && helper_Gl.all_in_cond != 1)
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--broker-ip=", strlen ("--broker-ip=")) == 0)
+	{
+	  helper_Gl.broker_ip = strdup (argv[i] + strlen ("--broker-ip="));
+	}
+      else if (strncmp (argv[i], "--broker-port=", strlen ("--broker-port=")) == 0)
+	{
+	  helper_Gl.broker_port = atoi (argv[i] + strlen ("--broker-port="));
+	}
+      else if (strncmp (argv[i], "--user=", strlen ("--user=")) == 0)
+	{
+	  helper_Gl.dba_user = strdup (argv[i] + strlen ("--user="));
+	}
+      else if (strncmp (argv[i], "--password=", strlen ("--password=")) == 0)
+	{
+	  helper_Gl.dba_passwd = strdup (argv[i] + strlen ("--password="));
+	}
+      else if (strncmp (argv[i], "--print-log-item", strlen ("--print-log-item")) == 0)
+	{
+	  helper_Gl.print_log_item = 1;
+	}
+      else
+	{
+	  goto print_usages;
+	}
+    }
+
+  helper_Gl.database_name = strdup (argv[argc - 1]);
+
+  if (helper_Gl.cdc_server_ip == NULL)
+    {
+      helper_Gl.cdc_server_ip = strdup ("127.0.0.1");
+    }
+
+  if (helper_Gl.broker_ip == NULL)
+    {
+      helper_Gl.broker_ip = strdup ("127.0.0.1");
+    }
+
+  if (helper_Gl.dba_user == NULL)
+    {
+      helper_Gl.dba_user = strdup ("dba");
+    }
+
+  if (helper_Gl.dba_passwd == NULL)
+    {
+      helper_Gl.dba_passwd = strdup ("");
     }
 
   return NO_ERROR;
+
+print_usages:
+
+  print_usages ();
+  exit (0);
 }
 
 /*
@@ -178,7 +317,7 @@ convert_class_oid_to_uint64 (char *class_oid)
 
   memcpy (&class_oid_dest, &class_oid_src, sizeof (class_oid_dest));
 
-#if 1
+#if 0
   printf ("class_oid: %s, class_oid_src: @%d|%hd|%hd, class_oid_dest: %lld\n", class_oid, class_oid_src.pageid,
 	  class_oid_src.slotid, class_oid_src.volid, class_oid_dest);
 #endif
@@ -226,8 +365,17 @@ fetch_all_schema_info (void)
 
   int error_code;
 
-  //conn_handle = cci_connect ("localhost", 33000, "demodb", "dba", "");
-  conn_handle = cci_connect ("127.0.0.1", 33000, "demodb", "dba", "");
+#if 0
+  printf ("helper_Gl.broker_ip = %s\n", helper_Gl.broker_ip);
+  printf ("helper_Gl.broker_port = %d\n", helper_Gl.broker_port);
+  printf ("helper_Gl.database_name = %s\n", helper_Gl.database_name);
+  printf ("helper_Gl.dba_user = %s\n", helper_Gl.dba_user);
+  printf ("helper_Gl.dba_passwd = %s\n", helper_Gl.dba_passwd);
+#endif
+
+  conn_handle =
+    cci_connect (helper_Gl.broker_ip, helper_Gl.broker_port, helper_Gl.database_name, helper_Gl.dba_user,
+		 helper_Gl.dba_passwd);
   if (conn_handle < 0)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -272,7 +420,7 @@ fetch_all_schema_info (void)
 
       class_oid_2 = convert_class_oid_to_uint64 (class_oid);
 
-#if 1
+#if 0
       printf ("class_name: %s, class_oid: %s, class_oid_2: %lld\n", class_name, class_oid, class_oid_2);
 #endif
 
@@ -372,7 +520,7 @@ fetch_all_schema_info (void)
 		PRINT_ERRMSG_GOTO_ERR (error_code);
 	      }
 
-#if 1
+#if 0
 	    printf ("attr_name: %s, def_order: %d, data_type: %d\n", attr_name, def_order, data_type);
 #endif
 
@@ -472,6 +620,7 @@ print_ddl (CUBRID_DATA_ITEM * data_item)
   printf ("classoid: %lld\n", data_item->ddl.classoid);
   printf ("statement: %s\n", data_item->ddl.statement);
   printf ("statement_length: %d\n", data_item->ddl.statement_length);
+
   return NO_ERROR;
 }
 
@@ -496,18 +645,24 @@ print_dml (CUBRID_DATA_ITEM * data_item)
 {
   printf ("dml_type: %d (%s)\n", data_item->dml.dml_type, convert_dml_type_to_string (data_item->dml.dml_type));
   printf ("classoid: %lld\n", data_item->dml.classoid);
+  printf ("\n");
   printf ("num_changed_column: %d\n", data_item->dml.num_changed_column);
   printf ("changed_column:\n");
+
   for (int i = 0; i < data_item->dml.num_changed_column; i++)
     {
-      printf ("[%d] data (%d)\n", data_item->dml.changed_column_index[i], data_item->dml.changed_column_data_len[i]);
+      printf ("\tindex: %d, data_len: %d\n", data_item->dml.changed_column_index[i],
+	      data_item->dml.changed_column_data_len[i]);
     }
 
+  printf ("\n");
   printf ("num_cond_column: %d\n", data_item->dml.num_cond_column);
   printf ("cond_column:\n");
+
   for (int i = 0; i < data_item->dml.num_cond_column; i++)
     {
-      printf ("[%d] data (%d)\n", data_item->dml.cond_column_index[i], data_item->dml.cond_column_data_len[i]);
+      printf ("\tindex: %d, data_len: %d\n", data_item->dml.cond_column_index[i],
+	      data_item->dml.cond_column_data_len[i]);
     }
 }
 
@@ -542,12 +697,11 @@ int
 print_log_item (CUBRID_LOG_ITEM * log_item)
 {
   int error_code;
-#if 1
-  if (log_item->data_item_type == 3)
+
+  if (!helper_Gl.print_log_item)
     {
       return NO_ERROR;
     }
-#endif
 
   printf ("=====================================================================================\n");
   printf ("[LOG_ITEM]\n");
@@ -555,21 +709,31 @@ print_log_item (CUBRID_LOG_ITEM * log_item)
   printf ("user: %s\n", log_item->user);
   printf ("data_item_type: %d (%s)\n\n", log_item->data_item_type,
 	  convert_data_item_type_to_string (log_item->data_item_type));
+
   printf ("[DATA_ITEM]\n");
+
   switch (log_item->data_item_type)
     {
     case 0:
       print_ddl (&log_item->data_item);
+
       break;
+
     case 1:
       print_dml (&log_item->data_item);
+
       break;
+
     case 2:
       print_dcl (&log_item->data_item);
+
       break;
+
     case 3:
       print_timer (&log_item->data_item);
+
       break;
+
     default:
       assert (0);
     }
@@ -594,6 +758,7 @@ convert_ddl (CUBRID_DATA_ITEM * data_item, char **sql)
     case 3:
     case 4:
       break;
+
     default:
       assert (0);
     }
@@ -1321,10 +1486,14 @@ convert_dcl (CUBRID_DATA_ITEM * data_item, char **sql)
     {
     case 0:
       *sql = strdup ("commit");
+
       break;
+
     case 1:
       *sql = strdup ("rollback");
+
       break;
+
     default:
       assert (0);
     }
@@ -1399,14 +1568,14 @@ extract_log (void)
   int error_code;
 
   // -1 ~ 360 (300)
-  error_code = cubrid_log_set_connection_timeout (300);
+  error_code = cubrid_log_set_connection_timeout (helper_Gl.connection_timeout);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
   // -1 ~ 360 (300)
-  error_code = cubrid_log_set_extraction_timeout (300);
+  error_code = cubrid_log_set_extraction_timeout (helper_Gl.extraction_timeout);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1422,14 +1591,14 @@ extract_log (void)
     }
 
   // 1 ~ 1024 (512)
-  error_code = cubrid_log_set_max_log_item (512);
+  error_code = cubrid_log_set_max_log_item (helper_Gl.max_log_item);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
   // 0 ~ 1 (0)
-  error_code = cubrid_log_set_all_in_cond (0);
+  error_code = cubrid_log_set_all_in_cond (helper_Gl.all_in_cond);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1447,8 +1616,9 @@ extract_log (void)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  //error_code = cubrid_log_connect_server ("localhost", 1523, "demodb", "dba", "");
-  error_code = cubrid_log_connect_server ("127.0.0.1", 1523, "demodb", "dba", "");
+  error_code =
+    cubrid_log_connect_server (helper_Gl.cdc_server_ip, helper_Gl.cdc_server_port, helper_Gl.database_name,
+			       helper_Gl.dba_user, helper_Gl.dba_passwd);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1462,7 +1632,9 @@ extract_log (void)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
+#if 0
   printf ("[PASS] cubrid_log_find_lsa ()\n");
+#endif
 
   {
     CUBRID_LOG_ITEM *log_item_list, *log_item;
@@ -1503,6 +1675,7 @@ extract_log (void)
   }
 
   return NO_ERROR;
+
 error:
 
   return YES_ERROR;
