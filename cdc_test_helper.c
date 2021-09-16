@@ -56,6 +56,7 @@ struct helper_global
   char *database_name;
 
   int print_log_item;
+  int print_timer;
 
   int connection_timeout;	// -1 ~ 360 (def: 300)
   int extraction_timeout;	// -1 ~ 360 (def: 300)
@@ -132,6 +133,7 @@ init_helper_global (void)
   helper_Gl.database_name = NULL;
 
   helper_Gl.print_log_item = 0;
+  helper_Gl.print_timer = 0;
 
   helper_Gl.cci_conn_handle = -1;
 }
@@ -151,7 +153,8 @@ print_usages (void)
   printf ("\t--broker-port=[Port Number]           (default: 33000)\n");
   printf ("\t--user=[DBA User]                     (default: dba)\n");
   printf ("\t--password=[DBA Password]             (default: NULL)\n");
-  printf ("\t--print-log-item                      (default: off)\n");
+  printf ("\t--print-log-item                      (default: disable)\n");
+  printf ("\t--print-timer                         (default: disable)\n");
   printf ("\n");
 }
 
@@ -235,6 +238,10 @@ process_command_line_option (int argc, char *argv[])
       else if (strncmp (argv[i], "--print-log-item", strlen ("--print-log-item")) == 0)
 	{
 	  helper_Gl.print_log_item = 1;
+	}
+      else if (strncmp (argv[i], "--print-timer", strlen ("--print-timer")) == 0)
+	{
+	  helper_Gl.print_timer = 1;
 	}
       else
 	{
@@ -741,12 +748,10 @@ print_log_item (CUBRID_LOG_ITEM * log_item)
       goto end;
     }
 
-#if 0
-  if (log_item->data_item_type == 3)
+  if (helper_Gl.print_timer == 0 && log_item->data_item_type == 3)
     {
       goto end;
     }
-#endif
 
   printf ("=====================================================================================\n");
   printf ("[LOG_ITEM]\n");
