@@ -71,12 +71,8 @@ struct helper_global
   char *trace_path;
   int trace_level;
   int trace_size;
-};
 
-typedef struct target_db_global TARGET_DB_GLOBAL;
-struct target_db_global
-{
-
+  int cci_conn_handle;
 };
 
 typedef struct class_oid CLASS_OID;
@@ -116,8 +112,6 @@ struct class_info_global
 };
 
 HELPER_GLOBAL helper_Gl;
-TARGET_DB_GLOBAL target_db_Gl;
-
 CLASS_INFO_GLOBAL class_info_Gl;
 
 void
@@ -138,6 +132,8 @@ init_helper_global (void)
   helper_Gl.database_name = NULL;
 
   helper_Gl.print_log_item = 0;
+
+  helper_Gl.cci_conn_handle = -1;
 }
 
 void
@@ -357,7 +353,7 @@ make_attr_info (ATTR_INFO * attr_info, char *attr_name, int attr_type, int def_o
 }
 
 int
-fetch_all_schema_info (void)
+fetch_schema_info (char *query)
 {
   int conn_handle, req_handle;
   int exec_retval;
@@ -378,17 +374,24 @@ fetch_all_schema_info (void)
   printf ("helper_Gl.dba_passwd = %s\n", helper_Gl.dba_passwd);
 #endif
 
-  conn_handle =
-    cci_connect (helper_Gl.broker_ip, helper_Gl.broker_port, helper_Gl.database_name, helper_Gl.dba_user,
-		 helper_Gl.dba_passwd);
-  if (conn_handle < 0)
+  if (helper_Gl.cci_conn_handle == -1)
     {
-      PRINT_ERRMSG_GOTO_ERR (error_code);
+      conn_handle =
+	cci_connect (helper_Gl.broker_ip, helper_Gl.broker_port, helper_Gl.database_name, helper_Gl.dba_user,
+		     helper_Gl.dba_passwd);
+      if (conn_handle < 0)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      helper_Gl.cci_conn_handle = conn_handle;
+    }
+  else
+    {
+      conn_handle = helper_Gl.cci_conn_handle;
     }
 
-  req_handle =
-    cci_prepare_and_execute (conn_handle, "select class_of, class_name from _db_class where is_system_class != 1", 0,
-			     &exec_retval, &err_buf);
+  req_handle = cci_prepare_and_execute (conn_handle, query, 0, &exec_retval, &err_buf);
   if (req_handle < 0)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -544,6 +547,36 @@ fetch_all_schema_info (void)
 	    PRINT_ERRMSG_GOTO_ERR (error_code);
 	  }
       }
+    }
+
+  error_code = cci_close_query_result (req_handle, &err_buf);
+  if (error_code < 0)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  error_code = cci_close_req_handle (req_handle);
+  if (error_code < 0)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+fetch_all_schema_info (void)
+{
+  int error_code;
+
+  error_code = fetch_schema_info ("select class_of, class_name from _db_class where is_system_class != 1");
+  if (error_code != NO_ERROR)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
   return NO_ERROR;
@@ -705,8 +738,15 @@ print_log_item (CUBRID_LOG_ITEM * log_item)
 
   if (!helper_Gl.print_log_item)
     {
-      return NO_ERROR;
+      goto end;
     }
+
+#if 0
+  if (log_item->data_item_type == 3)
+    {
+      goto end;
+    }
+#endif
 
   printf ("=====================================================================================\n");
   printf ("[LOG_ITEM]\n");
@@ -744,6 +784,8 @@ print_log_item (CUBRID_LOG_ITEM * log_item)
     }
 
   printf ("=====================================================================================\n\n");
+
+end:
 
   return NO_ERROR;
 
@@ -1565,6 +1607,345 @@ error:
 }
 
 int
+is_ddl_stmt (CUBRID_LOG_ITEM * log_item)
+{
+  return log_item->data_item_type == 0 ? 1 : 0;
+}
+
+int
+is_table_object (CUBRID_DATA_ITEM * data_item)
+{
+  return data_item->ddl.object_type == 0 ? 1 : 0;
+}
+
+int
+find_table_name (char *sql_buf, char *table_name)
+{
+  char *s, *e;
+
+  int error_code;
+
+  // 'A' -> 'a'
+  for (int i = 0; i < strlen (sql_buf); i++)
+    {
+      if (sql_buf[i] >= 'A' && sql_buf[i] <= 'Z')
+	{
+	  sql_buf[i] = sql_buf[i] + 32;
+	}
+    }
+
+  s = strstr (sql_buf, "table");
+  if (s == NULL)
+    {
+      s = strstr (sql_buf, "class");
+      if (s == NULL)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+
+  s = s + 6;			// skipping 'table ' or 'class '
+
+  while (*s == ' ')
+    {
+      s++;
+    }
+
+  e = s;
+
+  while (*e != ' ')
+    {
+      e++;
+    }
+
+  *e = '\0';
+
+  strcpy (table_name, s);
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
+{
+  char *s, *e;
+
+  int error_code;
+
+  // 'A' -> 'a'
+  for (int i = 0; i < strlen (sql_buf); i++)
+    {
+      if (sql_buf[i] >= 'A' && sql_buf[i] <= 'Z')
+	{
+	  sql_buf[i] = sql_buf[i] + 32;
+	}
+    }
+
+  s = strstr (sql_buf, "table");
+  if (s == NULL)
+    {
+      s = strstr (sql_buf, "class");
+      if (s == NULL)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+
+  s = s + 6;			// skipping 'table ' or 'class '
+
+  while (*s == ' ')
+    {
+      s++;
+    }
+
+  e = s;
+
+  while (*e != ' ')
+    {
+      e++;
+    }
+
+  *e = '\0';
+
+  strcpy (old_table_name, s);
+
+  s = e + 1;
+  e = s;
+
+  s = strstr (e, "as");
+  if (s == NULL)
+    {
+      s = strstr (e, "to");
+      if (s == NULL)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+
+  s = s + 2;			// skipping 'as ' or 'to '
+
+  while (*s == ' ')
+    {
+      s++;
+    }
+
+  e = s;
+
+  while (*e != ' ')
+    {
+      e++;
+    }
+
+  *e = '\0';
+
+  strcpy (new_table_name, s);
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+register_class_info (CUBRID_DATA_ITEM * data_item)
+{
+  char sql_buf[10000] = { '\0', };
+  char table_name[100] = { '\0', };
+
+  int error_code;
+
+  strcpy (sql_buf, data_item->ddl.statement);
+
+  error_code = find_table_name (sql_buf, table_name);
+  if (error_code != NO_ERROR)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+#if 0
+  printf ("table_name = %s\n", table_name);
+#endif
+
+  sprintf (sql_buf, "select class_of, class_name from _db_class where class_name = \'%s\' and is_system_class != 1",
+	   table_name);
+
+#if 0
+  printf ("sql_buf = %s\n", sql_buf);
+#endif
+
+  error_code = fetch_schema_info (sql_buf);
+  if (error_code != NO_ERROR)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+unregister_class_info (CUBRID_DATA_ITEM * data_item)
+{
+  CLASS_INFO *class_info;
+  int del_idx;
+
+  int error_code;
+
+  class_info = find_class_info (data_item->ddl.classoid);
+  if (class_info == NULL)
+    {
+      goto end;
+    }
+
+  del_idx = class_info - class_info_Gl.class_info;
+
+  if (del_idx != class_info_Gl.class_info_size - 1)	// not last
+    {
+      class_info_Gl.class_info[del_idx] = class_info_Gl.class_info[class_info_Gl.class_info_size - 1];
+    }
+
+  class_info_Gl.class_info_size--;
+
+  assert (class_info_Gl.class_info_size >= 0);
+
+end:
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+change_table_name_at_class_info (CUBRID_DATA_ITEM * data_item)
+{
+  CLASS_INFO *class_info;
+
+  char sql_buf[10000] = { '\0', };
+  char old_table_name[100] = { '\0', };
+  char new_table_name[100] = { '\0', };
+
+  int error_code;
+
+  class_info = find_class_info (data_item->ddl.classoid);
+  if (class_info == NULL)
+    {
+      goto end;
+    }
+
+  strcpy (sql_buf, data_item->ddl.statement);
+
+  error_code = find_new_table_name (sql_buf, old_table_name, new_table_name);
+  if (error_code != NO_ERROR)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+#if 0
+  printf ("old_table_name: %s, new_table_name: %s\n", old_table_name, new_table_name);
+#endif
+
+  if (strcmp (class_info->class_name, old_table_name) != 0)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  free (class_info->class_name);
+
+  class_info->class_name = strdup (new_table_name);
+  if (class_info->class_name == NULL)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+end:
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+update_class_info (CUBRID_DATA_ITEM * data_item)
+{
+  int error_code;
+
+  switch (data_item->ddl.ddl_type)
+    {
+      /* create */
+    case 0:
+      error_code = register_class_info (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      /* alter */
+    case 1:
+      error_code = unregister_class_info (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      error_code = register_class_info (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      /* drop */
+    case 2:
+      error_code = unregister_class_info (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      /* rename */
+    case 3:
+      error_code = change_table_name_at_class_info (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      /* truncate */
+    case 4:
+
+      break;
+
+    default:
+      assert (0);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
 extract_log (void)
 {
   time_t start_time;
@@ -1589,7 +1970,7 @@ extract_log (void)
   // dir path (".")
   // 0 ~ 2 (0)
   // 10 ~ 512 (8)
-  error_code = cubrid_log_set_tracelog ("./tracelog.err", 0, 8);
+  error_code = cubrid_log_set_tracelog ("./tracelog.err ", 0, 8);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1638,7 +2019,7 @@ extract_log (void)
     }
 
 #if 0
-  printf ("[PASS] cubrid_log_find_lsa ()\n");
+  printf ("[PASS] cubrid_log_find_lsa () \ n ");
 #endif
 
   {
@@ -1654,8 +2035,8 @@ extract_log (void)
 	  }
 
 #if 0
-	printf ("[PASS] cubrid_log_extract ()\n");
-	//printf ("list_size: %d\n", list_size);
+	printf ("[PASS] cubrid_log_extract () \ n ");
+	//printf (" list_size:%d \ n ", list_size);
 #endif
 
 	log_item = log_item_list;
@@ -1672,6 +2053,15 @@ extract_log (void)
 	    if (error_code != NO_ERROR)
 	      {
 		PRINT_ERRMSG_GOTO_ERR (error_code);
+	      }
+
+	    if (is_ddl_stmt (log_item) && is_table_object (&log_item->data_item))
+	      {
+		error_code = update_class_info (&log_item->data_item);
+		if (error_code != NO_ERROR)
+		  {
+		    PRINT_ERRMSG_GOTO_ERR (error_code);
+		  }
 	      }
 
 	    log_item = log_item->next;
@@ -1704,7 +2094,7 @@ main (int argc, char *argv[])
     }
 
 #if 0
-  printf ("[PASS] fetch_all_schema_info ()\n");
+  printf ("[PASS] fetch_all_schema_info () \ n ");
 #endif
 
   error_code = extract_log ();
