@@ -1512,7 +1512,7 @@ make_update_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 
       if (i != data_item->dml.num_cond_column - 1)
 	{
-	  strcat (sql_buf, "and ");
+	  strcat (sql_buf, " and ");
 	}
       else
 	{
@@ -1935,7 +1935,7 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       printf ("=====================================================================================\n");
       printf ("[SQL]\n");
       printf ("transaction_id: %d\n", log_item->transaction_id);
-      printf ("sql:%s\n", sql);
+      printf ("sql: %s\n", sql);
       printf ("=====================================================================================\n\n");
     }
 
