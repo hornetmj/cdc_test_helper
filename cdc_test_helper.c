@@ -10,7 +10,7 @@
 #define NO_ERROR (0)
 #define YES_ERROR (-1)
 
-#define PRINT_ERRMSG_GOTO_ERR(error_code) printf ("[ERROR] error_code: %d at %s():%d\n", error_code, __func__, __LINE__); goto error
+#define PRINT_ERRMSG_GOTO_ERR(error_code) printf ("[ERROR] error_code: %d at %s ():%d\n", error_code, __func__, __LINE__); goto error
 
 enum
 {
@@ -51,12 +51,18 @@ struct helper_global
   char *broker_ip;
   int broker_port;
 
+  char *target_server_ip;
+  int target_server_port;
+  char *target_database_name;
+  int target_set_count;
+
   char *dba_user;
   char *dba_passwd;
   char *database_name;
 
   int print_log_item;
   int print_timer;
+  int print_transaction;
 
   int connection_timeout;	// -1 ~ 360 (def: 300)
   int extraction_timeout;	// -1 ~ 360 (def: 300)
@@ -74,6 +80,7 @@ struct helper_global
   int trace_size;
 
   int cci_conn_handle;
+  int target_conn_handle;
 };
 
 typedef struct class_oid CLASS_OID;
@@ -102,18 +109,34 @@ struct class_info
   uint64_t class_oid;
 
   ATTR_INFO attr_info[50];
-  int attr_info_size;
+  int attr_info_count;
 };
 
 typedef struct class_info_global CLASS_INFO_GLOBAL;
 struct class_info_global
 {
   CLASS_INFO class_info[10000];
-  int class_info_size;
+  int class_info_count;
+};
+
+typedef struct tran TRAN;
+struct tran
+{
+  int tran_id;
+  char *sql_list[1000];
+  int sql_count;
+};
+
+typedef struct tran_table_global TRAN_TABLE_GLOBAL;
+struct tran_table_global
+{
+  TRAN tran_table[10000];
+  int tran_count;
 };
 
 HELPER_GLOBAL helper_Gl;
 CLASS_INFO_GLOBAL class_info_Gl;
+TRAN_TABLE_GLOBAL tran_table_Gl;
 
 void
 init_helper_global (void)
@@ -128,14 +151,33 @@ init_helper_global (void)
   helper_Gl.broker_ip = NULL;
   helper_Gl.broker_port = 33000;
 
+  helper_Gl.target_server_ip = NULL;
+  helper_Gl.target_server_port = 0;
+  helper_Gl.target_database_name = NULL;
+  helper_Gl.target_set_count = 0;
+
   helper_Gl.dba_user = NULL;
   helper_Gl.dba_passwd = NULL;
   helper_Gl.database_name = NULL;
 
   helper_Gl.print_log_item = 0;
   helper_Gl.print_timer = 0;
+  helper_Gl.print_transaction = 0;
 
   helper_Gl.cci_conn_handle = -1;
+  helper_Gl.target_conn_handle = -1;
+}
+
+void
+init_class_info_global (void)
+{
+  class_info_Gl.class_info_count = 0;
+}
+
+void
+init_tran_table_global (void)
+{
+  tran_table_Gl.tran_count = 0;
 }
 
 void
@@ -151,10 +193,18 @@ print_usages (void)
   printf ("\t--cdc-all-in-cond=[(0|1)]             (default: 0)\n");
   printf ("\t--broker-ip=[IP Address]              (default: 127.0.0.1)\n");
   printf ("\t--broker-port=[Port Number]           (default: 33000)\n");
+  printf ("\t--target-server-ip=[IP Address]       (default: none)\n");
+  printf ("\t--target-server-port=[Port Number]    (default: none)\n");
+  printf ("\t--target-database-name=[DB Name]      (default: none)\n");
   printf ("\t--user=[DBA User]                     (default: dba)\n");
   printf ("\t--password=[DBA Password]             (default: NULL)\n");
   printf ("\t--print-log-item                      (default: disable)\n");
   printf ("\t--print-timer                         (default: disable)\n");
+  printf ("\t--print-transaction                   (default: disable)\n");
+  printf ("\n");
+  printf ("Caution:\n");
+  printf
+    ("The --target-server-ip, --target-server-port, and --target-database-name options must all be set together or not.\n");
   printf ("\n");
 }
 
@@ -167,6 +217,8 @@ process_command_line_option (int argc, char *argv[])
     }
 
   init_helper_global ();
+  init_class_info_global ();
+  init_tran_table_global ();
 
   // use the getopt() later.
   for (int i = 1; i < argc; i++)
@@ -227,6 +279,21 @@ process_command_line_option (int argc, char *argv[])
 	{
 	  helper_Gl.broker_port = atoi (argv[i] + strlen ("--broker-port="));
 	}
+      else if (strncmp (argv[i], "--target-server-ip=", strlen ("--target-server-ip=")) == 0)
+	{
+	  helper_Gl.target_server_ip = strdup (argv[i] + strlen ("--target-server-ip="));
+	  helper_Gl.target_set_count++;
+	}
+      else if (strncmp (argv[i], "--target-server-port=", strlen ("--target-server-port=")) == 0)
+	{
+	  helper_Gl.target_server_port = atoi (argv[i] + strlen ("--target-server-port="));
+	  helper_Gl.target_set_count++;
+	}
+      else if (strncmp (argv[i], "--target-database-name=", strlen ("--target-database-name=")) == 0)
+	{
+	  helper_Gl.target_database_name = strdup (argv[i] + strlen ("--target-database-name="));
+	  helper_Gl.target_set_count++;
+	}
       else if (strncmp (argv[i], "--user=", strlen ("--user=")) == 0)
 	{
 	  helper_Gl.dba_user = strdup (argv[i] + strlen ("--user="));
@@ -242,6 +309,10 @@ process_command_line_option (int argc, char *argv[])
       else if (strncmp (argv[i], "--print-timer", strlen ("--print-timer")) == 0)
 	{
 	  helper_Gl.print_timer = 1;
+	}
+      else if (strncmp (argv[i], "--print-transaction", strlen ("--print-transaction")) == 0)
+	{
+	  helper_Gl.print_transaction = 1;
 	}
       else
 	{
@@ -274,6 +345,16 @@ process_command_line_option (int argc, char *argv[])
   if (helper_Gl.dba_passwd == NULL)
     {
       helper_Gl.dba_passwd = strdup ("");
+    }
+
+#if 0
+  printf ("helper_Gl.target_set_count = %d\n", helper_Gl.target_set_count);
+#endif
+
+  // all should be set together.
+  if (helper_Gl.target_set_count > 0 && helper_Gl.target_set_count < 3)
+    {
+      goto print_usages;
     }
 
   return NO_ERROR;
@@ -371,6 +452,9 @@ fetch_schema_info (char *query)
 
   uint64_t class_oid_2;
 
+  CLASS_INFO *cur_class_info = NULL;
+  ATTR_INFO *cur_attr_info = NULL;
+
   int error_code;
 
 #if 0
@@ -404,14 +488,17 @@ fetch_schema_info (char *query)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  class_info_Gl.class_info_size = 0;
-
   // class info
-  for (int i = 0; i < exec_retval; i++)
+  while (1)
     {
       error_code = cci_cursor (req_handle, 1, CCI_CURSOR_CURRENT, &err_buf);
       if (error_code < 0)
 	{
+	  if (error_code == CCI_ER_NO_MORE_DATA)
+	    {
+	      break;
+	    }
+
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
@@ -439,14 +526,20 @@ fetch_schema_info (char *query)
       printf ("class_name: %s, class_oid: %s, class_oid_2: %lld\n", class_name, class_oid, class_oid_2);
 #endif
 
-      error_code = make_class_info (&class_info_Gl.class_info[i], class_name, class_oid_2);
+      assert (class_info_Gl.class_info_count < 10000);
+      cur_class_info = &class_info_Gl.class_info[class_info_Gl.class_info_count];
+      class_info_Gl.class_info_count++;
+
+      error_code = make_class_info (cur_class_info, class_name, class_oid_2);
       if (error_code != NO_ERROR)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
-      class_info_Gl.class_info_size++;
-      class_info_Gl.class_info[i].attr_info_size = 0;
+#if 0
+      printf ("class_info_Gl.class_info_count = %d\n", class_info_Gl.class_info_count);
+#endif
+      cur_class_info->attr_info_count = 0;
 
       // attr infos for each class info
       {
@@ -476,11 +569,16 @@ fetch_schema_info (char *query)
 	    PRINT_ERRMSG_GOTO_ERR (error_code);
 	  }
 
-	for (int j = 0; j < exec_retval_2; j++)
+	while (1)
 	  {
 	    error_code = cci_cursor (req_handle_2, 1, CCI_CURSOR_CURRENT, &err_buf);
 	    if (error_code < 0)
 	      {
+		if (error_code == CCI_ER_NO_MORE_DATA)
+		  {
+		    break;
+		  }
+
 		PRINT_ERRMSG_GOTO_ERR (error_code);
 	      }
 
@@ -527,9 +625,11 @@ fetch_schema_info (char *query)
 		PRINT_ERRMSG_GOTO_ERR (error_code);
 	      }
 
-	    error_code =
-	      make_attr_info (&class_info_Gl.class_info[i].attr_info[j], attr_name, data_type, def_order, is_nullable,
-			      is_primary_key);
+	    assert (cur_class_info->attr_info_count < 50);
+	    cur_attr_info = &cur_class_info->attr_info[cur_class_info->attr_info_count];
+	    cur_class_info->attr_info_count++;
+
+	    error_code = make_attr_info (cur_attr_info, attr_name, data_type, def_order, is_nullable, is_primary_key);
 	    if (error_code < 0)
 	      {
 		PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -538,8 +638,6 @@ fetch_schema_info (char *query)
 #if 0
 	    printf ("attr_name: %s, def_order: %d, data_type: %d\n", attr_name, def_order, data_type);
 #endif
-
-	    class_info_Gl.class_info[i].attr_info_size++;
 	  }
 
 	error_code = cci_close_query_result (req_handle_2, &err_buf);
@@ -826,7 +924,7 @@ find_class_info (uint64_t class_oid)
   int i;
   CLASS_INFO *class_info;
 
-  for (i = 0; i < class_info_Gl.class_info_size; i++)
+  for (i = 0; i < class_info_Gl.class_info_count; i++)
     {
       class_info = &class_info_Gl.class_info[i];
 
@@ -845,7 +943,7 @@ find_attr_info (CLASS_INFO * class_info, int def_order)
   int i;
   ATTR_INFO *attr_info;
 
-  for (i = 0; i < class_info->attr_info_size; i++)
+  for (i = 0; i < class_info->attr_info_count; i++)
     {
       attr_info = &class_info->attr_info[i];
 
@@ -1247,10 +1345,21 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
   class_info = find_class_info (data_item->dml.classoid);
   if (class_info == NULL)
     {
+#if 0
+      printf ("data_item->dml.classoid = %lld\n", data_item->dml.classoid);
+      printf ("class_info_Gl.class_info_count = %d\n", class_info_Gl.class_info_count);
+      for (i = 0; i < class_info_Gl.class_info_count; i++)
+	{
+	  class_info = &class_info_Gl.class_info[i];
+
+	  printf ("class_info->class_oid = %lld\n", class_info->class_oid);
+	}
+#endif
+
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  assert (class_info->attr_info_size == data_item->dml.num_changed_column);
+  assert (class_info->attr_info_count == data_item->dml.num_changed_column);
 
   sprintf (sql_buf, "insert into %s (", class_info->class_name);
 
@@ -1260,7 +1369,7 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 
       strcat (sql_buf, attr_info->attr_name);
 
-      if (i != class_info->attr_info_size - 1)
+      if (i != class_info->attr_info_count - 1)
 	{
 	  strcat (sql_buf, ", ");
 	}
@@ -1291,7 +1400,7 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
-      if (i != class_info->attr_info_size - 1)
+      if (i != class_info->attr_info_count - 1)
 	{
 	  strcat (sql_buf, ", ");
 	}
@@ -1336,7 +1445,7 @@ make_update_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  assert (class_info->attr_info_size >= data_item->dml.num_changed_column);
+  assert (class_info->attr_info_count >= data_item->dml.num_changed_column);
 
   sprintf (sql_buf, "update %s set ", class_info->class_name);
 
@@ -1448,7 +1557,7 @@ make_delete_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  assert (class_info->attr_info_size >= data_item->dml.num_cond_column);
+  assert (class_info->attr_info_count >= data_item->dml.num_cond_column);
 
   sprintf (sql_buf, "delete from %s where ", class_info->class_name);
 
@@ -1553,6 +1662,214 @@ convert_dcl (CUBRID_DATA_ITEM * data_item, char **sql)
   return *sql != NULL ? NO_ERROR : YES_ERROR;
 }
 
+TRAN *
+find_or_alloc_tran (int tran_id)
+{
+  int i;
+  int is_found = 0;
+  TRAN *tran;
+
+  if (tran_table_Gl.tran_count == 10000)
+    {
+      assert (0);
+
+      return NULL;
+    }
+
+  // find
+  for (i = 0; i < tran_table_Gl.tran_count; i++)
+    {
+      tran = &tran_table_Gl.tran_table[i];
+
+      if (tran->tran_id == tran_id)
+	{
+	  is_found = 1;
+
+	  break;
+	}
+    }
+
+  // alloc
+  if (!is_found)
+    {
+      tran = &tran_table_Gl.tran_table[tran_table_Gl.tran_count];
+
+      tran->tran_id = tran_id;
+      tran->sql_count = 0;
+
+      tran_table_Gl.tran_count++;
+    }
+
+  return tran;
+}
+
+int
+register_sql_to_tran (int tran_id, char *sql)
+{
+  TRAN *tran;
+  int error_code;
+
+  tran = find_or_alloc_tran (tran_id);
+  if (tran == NULL)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  tran->sql_list[tran->sql_count] = sql;
+
+  tran->sql_count++;
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+TRAN *
+find_tran (int tran_id)
+{
+  int i;
+  TRAN *tran;
+
+  for (i = 0; i < tran_table_Gl.tran_count; i++)
+    {
+      tran = &tran_table_Gl.tran_table[i];
+
+      if (tran->tran_id == tran_id)
+	{
+	  return tran;
+	}
+    }
+
+  return NULL;
+}
+
+void
+print_sql_list_in_tran (int tran_id)
+{
+  int i;
+  TRAN *tran;
+
+  tran = find_tran (tran_id);
+
+  assert (tran != NULL);
+  assert (tran->sql_count > 0);
+
+  printf ("=====================================================================================\n");
+  printf ("[TRANS-%d]\n\n", tran->tran_id);
+
+  for (i = 0; i < tran->sql_count; i++)
+    {
+      printf ("[sql-%d] %s\n", i + 1, tran->sql_list[i]);
+    }
+
+  printf ("=====================================================================================\n\n");
+}
+
+int
+is_apply_target_db (void)
+{
+  return helper_Gl.target_set_count == 3 ? 1 : 0;
+}
+
+int
+apply_target_db (int tran_id)
+{
+  int conn_handle, req_handle;
+  int exec_retval;
+  T_CCI_ERROR err_buf;
+
+  TRAN *tran;
+
+  int error_code;
+
+#if 0
+  printf ("helper_Gl.target_server_ip = %s\n", helper_Gl.target_server_ip);
+  printf ("helper_Gl.target_server_port = %d\n", helper_Gl.target_server_port);
+  printf ("helper_Gl.target_database_name = %s\n", helper_Gl.target_database_name);
+  printf ("helper_Gl.dba_user = %s\n", helper_Gl.dba_user);
+  printf ("helper_Gl.dba_passwd = %s\n", helper_Gl.dba_passwd);
+#endif
+
+  if (helper_Gl.target_conn_handle == -1)
+    {
+      conn_handle =
+	cci_connect (helper_Gl.target_server_ip, helper_Gl.target_server_port, helper_Gl.target_database_name,
+		     helper_Gl.dba_user, helper_Gl.dba_passwd);
+      if (conn_handle < 0)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      error_code = cci_set_autocommit (conn_handle, CCI_AUTOCOMMIT_FALSE);
+      if (error_code < 0)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      helper_Gl.target_conn_handle = conn_handle;
+    }
+  else
+    {
+      conn_handle = helper_Gl.target_conn_handle;
+    }
+
+  tran = find_tran (tran_id);
+  assert (tran != NULL);
+
+  for (int i = 0; i < tran->sql_count; i++)
+    {
+      req_handle = cci_prepare_and_execute (conn_handle, tran->sql_list[i], 0, &exec_retval, &err_buf);
+      if (req_handle < 0)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      error_code = cci_close_req_handle (req_handle);
+      if (error_code < 0)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+unregister_tran (int tran_id)
+{
+  TRAN *tran;
+  int del_idx;
+
+  tran = find_tran (tran_id);
+  assert (tran != NULL);
+
+  for (int i = 0; i < tran->sql_count; i++)
+    {
+      free (tran->sql_list[i]);
+    }
+
+  tran->sql_count = 0;
+
+  del_idx = tran - tran_table_Gl.tran_table;
+
+  if (del_idx != tran_table_Gl.tran_count - 1)	// not last
+    {
+      tran_table_Gl.tran_table[del_idx] = tran_table_Gl.tran_table[tran_table_Gl.tran_count - 1];
+    }
+
+  tran_table_Gl.tran_count--;
+
+  assert (tran_table_Gl.tran_count >= 0);
+
+  return NO_ERROR;
+}
+
 int
 convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 {
@@ -1568,6 +1885,12 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
+      error_code = register_sql_to_tran (log_item->transaction_id, sql);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
       break;
 
     case 1:
@@ -1577,10 +1900,22 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
+      error_code = register_sql_to_tran (log_item->transaction_id, sql);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
       break;
 
     case 2:
       error_code = convert_dcl (&log_item->data_item, &sql);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      error_code = register_sql_to_tran (log_item->transaction_id, sql);
       if (error_code != NO_ERROR)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1600,8 +1935,31 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       printf ("=====================================================================================\n");
       printf ("[SQL]\n");
       printf ("transaction_id: %d\n", log_item->transaction_id);
-      printf ("sql: %s\n", sql);
+      printf ("sql:%s\n", sql);
       printf ("=====================================================================================\n\n");
+    }
+
+  if (log_item->data_item_type == 2)
+    {
+      if (helper_Gl.print_transaction)
+	{
+	  print_sql_list_in_tran (log_item->transaction_id);
+	}
+
+      if (is_apply_target_db () && log_item->data_item.dcl.dcl_type == 0)
+	{
+	  error_code = apply_target_db (log_item->transaction_id);
+	  if (error_code != NO_ERROR)
+	    {
+	      PRINT_ERRMSG_GOTO_ERR (error_code);
+	    }
+	}
+
+      error_code = unregister_tran (log_item->transaction_id);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
     }
 
   return NO_ERROR;
@@ -1639,10 +1997,10 @@ find_table_name (char *sql_buf, char *table_name)
 	}
     }
 
-  s = strstr (sql_buf, "table");
+  s = strstr (sql_buf, " table ");
   if (s == NULL)
     {
-      s = strstr (sql_buf, "class");
+      s = strstr (sql_buf, " class ");
       if (s == NULL)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1690,10 +2048,10 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
 	}
     }
 
-  s = strstr (sql_buf, "table");
+  s = strstr (sql_buf, " table ");
   if (s == NULL)
     {
-      s = strstr (sql_buf, "class");
+      s = strstr (sql_buf, " class ");
       if (s == NULL)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1721,10 +2079,10 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
   s = e + 1;
   e = s;
 
-  s = strstr (e, "as");
+  s = strstr (e, " as ");
   if (s == NULL)
     {
-      s = strstr (e, "to");
+      s = strstr (e, " to ");
       if (s == NULL)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1810,16 +2168,25 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
       goto end;
     }
 
-  del_idx = class_info - class_info_Gl.class_info;
+  free (class_info->class_name);
 
-  if (del_idx != class_info_Gl.class_info_size - 1)	// not last
+  for (int i = 0; i < class_info->attr_info_count; i++)
     {
-      class_info_Gl.class_info[del_idx] = class_info_Gl.class_info[class_info_Gl.class_info_size - 1];
+      free (class_info->attr_info[i].attr_name);
     }
 
-  class_info_Gl.class_info_size--;
+  class_info->attr_info_count = 0;
 
-  assert (class_info_Gl.class_info_size >= 0);
+  del_idx = class_info - class_info_Gl.class_info;
+
+  if (del_idx != class_info_Gl.class_info_count - 1)	// not last
+    {
+      class_info_Gl.class_info[del_idx] = class_info_Gl.class_info[class_info_Gl.class_info_count - 1];
+    }
+
+  class_info_Gl.class_info_count--;
+
+  assert (class_info_Gl.class_info_count >= 0);
 
 end:
 
@@ -1975,7 +2342,7 @@ extract_log (void)
   // dir path (".")
   // 0 ~ 2 (0)
   // 10 ~ 512 (8)
-  error_code = cubrid_log_set_tracelog ("./tracelog.err ", 0, 8);
+  error_code = cubrid_log_set_tracelog ("./tracelog.err", 0, 8);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -2024,7 +2391,7 @@ extract_log (void)
     }
 
 #if 0
-  printf ("[PASS] cubrid_log_find_lsa () \ n ");
+  printf ("[PASS] cubrid_log_find_lsa ()\n");
 #endif
 
   {
@@ -2040,8 +2407,8 @@ extract_log (void)
 	  }
 
 #if 0
-	printf ("[PASS] cubrid_log_extract () \ n ");
-	//printf (" list_size:%d \ n ", list_size);
+	printf ("[PASS] cubrid_log_extract ()\n");
+	printf ("list_size: %d\n", list_size);
 #endif
 
 	log_item = log_item_list;
@@ -2071,6 +2438,12 @@ extract_log (void)
 
 	    log_item = log_item->next;
 	  }
+
+	error_code = cubrid_log_clear_log_item (log_item_list);
+	if (error_code != CUBRID_LOG_SUCCESS)
+	  {
+	    PRINT_ERRMSG_GOTO_ERR (error_code);
+	  }
       }
   }
 
@@ -2099,7 +2472,7 @@ main (int argc, char *argv[])
     }
 
 #if 0
-  printf ("[PASS] fetch_all_schema_info () \ n ");
+  printf ("[PASS] fetch_all_schema_info ()\n");
 #endif
 
   error_code = extract_log ();
