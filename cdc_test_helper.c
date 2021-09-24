@@ -2016,7 +2016,7 @@ find_table_name (char *sql_buf, char *table_name)
 
   e = s;
 
-  while (*e != ' ')
+  while (*e != ' ' && *e != '(')
     {
       e++;
     }
