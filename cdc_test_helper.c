@@ -110,6 +110,9 @@ struct class_info
 
   ATTR_INFO attr_info[50];
   int attr_info_count;
+
+  ATTR_INFO *attr_info_p;
+  int is_malloc_attr_info;
 };
 
 typedef struct class_info_global CLASS_INFO_GLOBAL;
@@ -569,6 +572,26 @@ fetch_schema_info (char *query)
 	    PRINT_ERRMSG_GOTO_ERR (error_code);
 	  }
 
+#if 0
+	printf ("exec_retval_2 = %d\n", exec_retval_2);
+#endif
+
+	if (exec_retval_2 <= 50)	// if column count of table is larger than 50, then malloc.
+	  {
+	    cur_class_info->attr_info_p = cur_class_info->attr_info;
+	    cur_class_info->is_malloc_attr_info = 0;
+	  }
+	else
+	  {
+	    cur_class_info->attr_info_p = (ATTR_INFO *) malloc (sizeof (ATTR_INFO) * exec_retval_2);
+	    if (cur_class_info->attr_info_p == NULL)
+	      {
+		PRINT_ERRMSG_GOTO_ERR (error_code);
+	      }
+
+	    cur_class_info->is_malloc_attr_info = 1;
+	  }
+
 	while (1)
 	  {
 	    error_code = cci_cursor (req_handle_2, 1, CCI_CURSOR_CURRENT, &err_buf);
@@ -625,8 +648,7 @@ fetch_schema_info (char *query)
 		PRINT_ERRMSG_GOTO_ERR (error_code);
 	      }
 
-	    assert (cur_class_info->attr_info_count < 50);
-	    cur_attr_info = &cur_class_info->attr_info[cur_class_info->attr_info_count];
+	    cur_attr_info = &cur_class_info->attr_info_p[cur_class_info->attr_info_count];
 	    cur_class_info->attr_info_count++;
 
 	    error_code = make_attr_info (cur_attr_info, attr_name, data_type, def_order, is_nullable, is_primary_key);
@@ -945,7 +967,7 @@ find_attr_info (CLASS_INFO * class_info, int def_order)
 
   for (i = 0; i < class_info->attr_info_count; i++)
     {
-      attr_info = &class_info->attr_info[i];
+      attr_info = &class_info->attr_info_p[i];
 
       if (attr_info->def_order == def_order)
 	{
@@ -1365,7 +1387,7 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 
   for (i = 0; i < data_item->dml.num_changed_column; i++)
     {
-      attr_info = &class_info->attr_info[i];
+      attr_info = &class_info->attr_info_p[i];
 
       strcat (sql_buf, attr_info->attr_name);
 
@@ -1387,7 +1409,7 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 	  break;
 	}
 
-      attr_info = &class_info->attr_info[i];
+      attr_info = &class_info->attr_info_p[i];
 
       if (attr_info->def_order != data_item->dml.changed_column_index[i])
 	{
@@ -1820,6 +1842,10 @@ apply_target_db (int tran_id)
 
   for (int i = 0; i < tran->sql_count; i++)
     {
+#if 0
+      printf ("tran->sql_list[%d]: %s\n", i, tran->sql_list[i]);
+#endif
+
       req_handle = cci_prepare_and_execute (conn_handle, tran->sql_list[i], 0, &exec_retval, &err_buf);
       if (req_handle < 0)
 	{
@@ -2172,10 +2198,18 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
 
   for (int i = 0; i < class_info->attr_info_count; i++)
     {
-      free (class_info->attr_info[i].attr_name);
+      free (class_info->attr_info_p[i].attr_name);
     }
 
   class_info->attr_info_count = 0;
+
+  if (class_info->is_malloc_attr_info)
+    {
+      free (class_info->attr_info_p);
+    }
+
+  class_info->attr_info_p = NULL;
+  class_info->is_malloc_attr_info = 0;
 
   del_idx = class_info - class_info_Gl.class_info;
 
