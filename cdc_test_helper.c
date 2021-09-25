@@ -64,16 +64,19 @@ struct helper_global
   int print_timer;
   int print_transaction;
 
-  int connection_timeout;	// -1 ~ 360 (def: 300)
-  int extraction_timeout;	// -1 ~ 360 (def: 300)
-  int max_log_item;		// 1 ~ 1024 (def: 512)
-  int all_in_cond;		// 0 ~ 1 (def: 0)
+  int connection_timeout;
+  int extraction_timeout;
+  int max_log_item;
+  int all_in_cond;
 
-  uint64_t *extraction_table;	// classoid array
-  int extraction_table_size;
+  char *extraction_table_name[100];
+  int extraction_table_name_count;
 
-  char **extraction_user;
-  int extraction_user_size;
+  uint64_t extraction_class_oid[100];
+  int extraction_class_oid_count;
+
+  char *extraction_user_name[100];
+  int extraction_user_name_count;
 
   char *trace_path;
   int trace_level;
@@ -151,6 +154,10 @@ init_helper_global (void)
   helper_Gl.max_log_item = 512;
   helper_Gl.all_in_cond = 0;
 
+  helper_Gl.extraction_table_name_count = 0;
+  helper_Gl.extraction_class_oid_count = 0;
+  helper_Gl.extraction_user_name_count = 0;
+
   helper_Gl.broker_ip = NULL;
   helper_Gl.broker_port = 33000;
 
@@ -188,27 +195,109 @@ print_usages (void)
 {
   printf ("cdc_test_helper [<option_list>] database-name\n\n");
   printf ("Available options:\n");
-  printf ("\t--cdc-server-ip=[IP Address]          (default: 127.0.0.1)\n");
-  printf ("\t--cdc-server-port=[Port Number]       (default: 1523)\n");
-  printf ("\t--cdc-connection-timeout=[[-1 - 360]] (default: 300)\n");
-  printf ("\t--cdc-extraction-timeout=[[-1 - 360]] (default: 300)\n");
-  printf ("\t--cdc-max-log-item=[[1 - 1024]]       (default: 512)\n");
-  printf ("\t--cdc-all-in-cond=[(0|1)]             (default: 0)\n");
-  printf ("\t--broker-ip=[IP Address]              (default: 127.0.0.1)\n");
-  printf ("\t--broker-port=[Port Number]           (default: 33000)\n");
-  printf ("\t--target-server-ip=[IP Address]       (default: none)\n");
-  printf ("\t--target-server-port=[Port Number]    (default: none)\n");
-  printf ("\t--target-database-name=[DB Name]      (default: none)\n");
-  printf ("\t--user=[DBA User]                     (default: dba)\n");
-  printf ("\t--password=[DBA Password]             (default: NULL)\n");
-  printf ("\t--print-log-item                      (default: disable)\n");
-  printf ("\t--print-timer                         (default: disable)\n");
-  printf ("\t--print-transaction                   (default: disable)\n");
+  printf ("\t--cdc-server-ip=[IP Address]               (default: 127.0.0.1)\n");
+  printf ("\t--cdc-server-port=[Port Number]            (default: 1523)\n");
+  printf ("\t--cdc-connection-timeout=[-1 - 360]        (default: 300)\n");
+  printf ("\t--cdc-extraction-timeout=[-1 - 360]        (default: 300)\n");
+  printf ("\t--cdc-max-log-item=[1 - 1024]              (default: 512)\n");
+  printf ("\t--cdc-all-in-cond=[0|1]                    (default: 0)\n");
+  printf ("\t--cdc-extraction-table=[Table1,Table2,...] (default: all tables)\n");
+  printf ("\t--cdc-extraction-user=[User1,User2,...]    (default: all users)\n");
+  printf ("\t--broker-ip=[IP Address]                   (default: 127.0.0.1)\n");
+  printf ("\t--broker-port=[Port Number]                (default: 33000)\n");
+  printf ("\t--target-server-ip=[IP Address]            (default: none)\n");
+  printf ("\t--target-server-port=[Port Number]         (default: none)\n");
+  printf ("\t--target-database-name=[DB Name]           (default: none)\n");
+  printf ("\t--user=[DBA User]                          (default: dba)\n");
+  printf ("\t--password=[DBA Password]                  (default: NULL)\n");
+  printf ("\t--print-log-item                           (default: disable)\n");
+  printf ("\t--print-timer                              (default: disable)\n");
+  printf ("\t--print-transaction                        (default: disable)\n");
   printf ("\n");
   printf ("Caution:\n");
   printf
     ("The --target-server-ip, --target-server-port, and --target-database-name options must all be set together or not.\n");
   printf ("\n");
+}
+
+int
+make_extraction_table_list (char *table_list)
+{
+  char *s, *n;
+
+  s = n = table_list;
+
+  for (int i = 0; i < 100; i++)
+    {
+      while (*n != ',' && *n != '\0')
+	{
+	  n++;
+	}
+
+      if (*n == ',')
+	{
+	  *n = '\0';
+	  n++;
+
+	  helper_Gl.extraction_table_name[i] = strdup (s);
+	  helper_Gl.extraction_table_name_count++;
+
+	  s = n;
+	}
+      else if (*n == '\0')
+	{
+	  helper_Gl.extraction_table_name[i] = strdup (s);
+	  helper_Gl.extraction_table_name_count++;
+
+	  break;
+	}
+      else
+	{
+	  assert (0);
+	}
+    }
+
+  return NO_ERROR;
+}
+
+int
+make_extraction_user_list (char *user_list)
+{
+  char *s, *n;
+
+  s = n = user_list;
+
+  for (int i = 0; i < 100; i++)
+    {
+      while (*n != ',' && *n != '\0')
+	{
+	  n++;
+	}
+
+      if (*n == ',')
+	{
+	  *n = '\0';
+	  n++;
+
+	  helper_Gl.extraction_user_name[i] = strdup (s);
+	  helper_Gl.extraction_user_name_count++;
+
+	  s = n;
+	}
+      else if (*n == '\0')
+	{
+	  helper_Gl.extraction_user_name[i] = strdup (s);
+	  helper_Gl.extraction_user_name_count++;
+
+	  break;
+	}
+      else
+	{
+	  assert (0);
+	}
+    }
+
+  return NO_ERROR;
 }
 
 int
@@ -270,6 +359,32 @@ process_command_line_option (int argc, char *argv[])
 	  helper_Gl.all_in_cond = atoi (argv[i] + strlen ("--cdc-all-in-cond="));
 
 	  if (helper_Gl.all_in_cond != 0 && helper_Gl.all_in_cond != 1)
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--cdc-extraction-table=", strlen ("--cdc-extraction-table=")) == 0)
+	{
+	  char table_list[2048];
+
+	  assert (strlen (argv[i]) <= 2048);
+
+	  strcpy (table_list, argv[i] + strlen ("--cdc-extraction-table="));
+
+	  if (NO_ERROR != make_extraction_table_list (table_list))
+	    {
+	      goto print_usages;
+	    }
+	}
+      else if (strncmp (argv[i], "--cdc-extraction-user=", strlen ("--cdc-extraction-user=")) == 0)
+	{
+	  char user_list[2048];
+
+	  assert (strlen (argv[i]) <= 2048);
+
+	  strcpy (user_list, argv[i] + strlen ("--cdc-extraction-user="));
+
+	  if (NO_ERROR != make_extraction_user_list (user_list))
 	    {
 	      goto print_usages;
 	    }
@@ -530,7 +645,9 @@ fetch_schema_info (char *query)
 #endif
 
       assert (class_info_Gl.class_info_count < 10000);
+
       cur_class_info = &class_info_Gl.class_info[class_info_Gl.class_info_count];
+
       class_info_Gl.class_info_count++;
 
       error_code = make_class_info (cur_class_info, class_name, class_oid_2);
@@ -542,6 +659,7 @@ fetch_schema_info (char *query)
 #if 0
       printf ("class_info_Gl.class_info_count = %d\n", class_info_Gl.class_info_count);
 #endif
+
       cur_class_info->attr_info_count = 0;
 
       // attr infos for each class info
@@ -696,14 +814,79 @@ error:
 }
 
 int
+make_extraction_class_oid_list (void)
+{
+  CLASS_INFO *class_info;
+
+  assert (helper_Gl.extraction_table_name_count != 0);
+  assert (helper_Gl.extraction_class_oid_count == 0);
+
+#if 0
+  printf ("helper_Gl.extraction_table_name_count=%d, class_info_Gl.class_info_count=%d\n",
+	  helper_Gl.extraction_table_name_count, class_info_Gl.class_info_count);
+#endif
+
+  for (int i = 0; i < class_info_Gl.class_info_count; i++)
+    {
+      class_info = &class_info_Gl.class_info[i];
+
+      assert (class_info != NULL && class_info->class_name != NULL);
+
+      helper_Gl.extraction_class_oid[i] = class_info->class_oid;
+
+      helper_Gl.extraction_class_oid_count++;
+    }
+
+  return NO_ERROR;
+}
+
+int
 fetch_all_schema_info (void)
 {
+  char sql_buf[10000] = { '\0', };
   int error_code;
 
-  error_code = fetch_schema_info ("select class_of, class_name from _db_class where is_system_class != 1");
-  if (error_code != NO_ERROR)
+  if (helper_Gl.extraction_table_name_count == 0)
     {
-      PRINT_ERRMSG_GOTO_ERR (error_code);
+      error_code = fetch_schema_info ("select class_of, class_name from _db_class where is_system_class != 1");
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+  else
+    {
+      strcat (sql_buf, "select class_of, class_name from _db_class where (");
+
+      for (int i = 0; i < helper_Gl.extraction_table_name_count; i++)
+	{
+	  sprintf (sql_buf + strlen (sql_buf), "class_name = \'%s\'", helper_Gl.extraction_table_name[i]);
+
+	  if (i != helper_Gl.extraction_table_name_count - 1)
+	    {
+	      strcat (sql_buf, " or ");
+	    }
+	  else
+	    {
+	      strcat (sql_buf, ") and is_system_class != 1");
+	    }
+	}
+
+#if 0
+      printf ("sql_buf: %s\n", sql_buf);
+#endif
+
+      error_code = fetch_schema_info (sql_buf);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      error_code = make_extraction_class_oid_list ();
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
     }
 
   return NO_ERROR;
@@ -816,8 +999,8 @@ print_dml (CUBRID_DATA_ITEM * data_item)
 
   for (int i = 0; i < data_item->dml.num_changed_column; i++)
     {
-      printf ("\tindex: %d, data_len: %d\n", data_item->dml.changed_column_index[i],
-	      data_item->dml.changed_column_data_len[i]);
+      printf ("\tindex: %d, data_len: %d\n",
+	      data_item->dml.changed_column_index[i], data_item->dml.changed_column_data_len[i]);
     }
 
   printf ("\n");
@@ -929,6 +1112,7 @@ convert_ddl (CUBRID_DATA_ITEM * data_item, char **sql)
     case 2:
     case 3:
     case 4:
+
       break;
 
     default:
@@ -943,10 +1127,9 @@ convert_ddl (CUBRID_DATA_ITEM * data_item, char **sql)
 CLASS_INFO *
 find_class_info (uint64_t class_oid)
 {
-  int i;
   CLASS_INFO *class_info;
 
-  for (i = 0; i < class_info_Gl.class_info_count; i++)
+  for (int i = 0; i < class_info_Gl.class_info_count; i++)
     {
       class_info = &class_info_Gl.class_info[i];
 
@@ -962,13 +1145,11 @@ find_class_info (uint64_t class_oid)
 ATTR_INFO *
 find_attr_info (CLASS_INFO * class_info, int def_order)
 {
-  int i;
   ATTR_INFO *attr_info;
 
-  for (i = 0; i < class_info->attr_info_count; i++)
+  for (int i = 0; i < class_info->attr_info_count; i++)
     {
       attr_info = &class_info->attr_info_p[i];
-
       if (attr_info->def_order == def_order)
 	{
 	  return attr_info;
@@ -979,8 +1160,8 @@ find_attr_info (CLASS_INFO * class_info, int def_order)
 }
 
 int
-process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx, ATTR_INFO * attr_info, char *sql_buf,
-			int *cant_make_sql)
+process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
+			ATTR_INFO * attr_info, char *sql_buf, int *cant_make_sql)
 {
   int error_code;
 
@@ -1169,8 +1350,8 @@ error:
 }
 
 int
-process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx, ATTR_INFO * attr_info, char *sql_buf,
-		     int *cant_make_sql)
+process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
+		     ATTR_INFO * attr_info, char *sql_buf, int *cant_make_sql)
 {
   int error_code;
 
@@ -1358,10 +1539,12 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 {
   int i;
   char sql_buf[10000] = { '\0', };
+
   CLASS_INFO *class_info;
   ATTR_INFO *attr_info;
 
   int cant_make_sql = 0;
+
   int error_code;
 
   class_info = find_class_info (data_item->dml.classoid);
@@ -1370,10 +1553,10 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 #if 0
       printf ("data_item->dml.classoid = %lld\n", data_item->dml.classoid);
       printf ("class_info_Gl.class_info_count = %d\n", class_info_Gl.class_info_count);
+
       for (i = 0; i < class_info_Gl.class_info_count; i++)
 	{
 	  class_info = &class_info_Gl.class_info[i];
-
 	  printf ("class_info->class_oid = %lld\n", class_info->class_oid);
 	}
 #endif
@@ -1455,10 +1638,12 @@ make_update_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 {
   int i;
   char sql_buf[10000] = { '\0', };
+
   CLASS_INFO *class_info;
   ATTR_INFO *attr_info;
 
   int cant_make_sql = 0;
+
   int error_code;
 
   class_info = find_class_info (data_item->dml.classoid);
@@ -1567,10 +1752,12 @@ make_delete_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 {
   int i;
   char sql_buf[10000] = { '\0', };
+
   CLASS_INFO *class_info;
   ATTR_INFO *attr_info;
 
   int cant_make_sql = 0;
+
   int error_code;
 
   class_info = find_class_info (data_item->dml.classoid);
@@ -1637,7 +1824,6 @@ int
 convert_dml (CUBRID_DATA_ITEM * data_item, char **sql)
 {
   int error_code;
-
   switch (data_item->dml.dml_type)
     {
     case 0:
@@ -1694,7 +1880,6 @@ find_or_alloc_tran (int tran_id)
   if (tran_table_Gl.tran_count == 10000)
     {
       assert (0);
-
       return NULL;
     }
 
@@ -1715,10 +1900,8 @@ find_or_alloc_tran (int tran_id)
   if (!is_found)
     {
       tran = &tran_table_Gl.tran_table[tran_table_Gl.tran_count];
-
       tran->tran_id = tran_id;
       tran->sql_count = 0;
-
       tran_table_Gl.tran_count++;
     }
 
@@ -1729,6 +1912,7 @@ int
 register_sql_to_tran (int tran_id, char *sql)
 {
   TRAN *tran;
+
   int error_code;
 
   tran = find_or_alloc_tran (tran_id);
@@ -1738,7 +1922,6 @@ register_sql_to_tran (int tran_id, char *sql)
     }
 
   tran->sql_list[tran->sql_count] = sql;
-
   tran->sql_count++;
 
   return NO_ERROR;
@@ -1817,8 +2000,8 @@ apply_target_db (int tran_id)
   if (helper_Gl.target_conn_handle == -1)
     {
       conn_handle =
-	cci_connect (helper_Gl.target_server_ip, helper_Gl.target_server_port, helper_Gl.target_database_name,
-		     helper_Gl.dba_user, helper_Gl.dba_passwd);
+	cci_connect (helper_Gl.target_server_ip, helper_Gl.target_server_port,
+		     helper_Gl.target_database_name, helper_Gl.dba_user, helper_Gl.dba_passwd);
       if (conn_handle < 0)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -1838,6 +2021,7 @@ apply_target_db (int tran_id)
     }
 
   tran = find_tran (tran_id);
+
   assert (tran != NULL);
 
   for (int i = 0; i < tran->sql_count; i++)
@@ -1873,6 +2057,7 @@ unregister_tran (int tran_id)
   int del_idx;
 
   tran = find_tran (tran_id);
+
   assert (tran != NULL);
 
   for (int i = 0; i < tran->sql_count; i++)
@@ -1900,6 +2085,7 @@ int
 convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 {
   char *sql;
+
   int error_code;
 
   switch (log_item->data_item_type)
@@ -1950,6 +2136,7 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       break;
 
     case 3:
+
       break;
 
     default:
@@ -2034,7 +2221,6 @@ find_table_name (char *sql_buf, char *table_name)
     }
 
   s = s + 6;			// skipping 'table ' or 'class '
-
   while (*s == ' ')
     {
       s++;
@@ -2106,6 +2292,7 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
   e = s;
 
   s = strstr (e, " as ");
+
   if (s == NULL)
     {
       s = strstr (e, " to ");
@@ -2160,9 +2347,8 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
   printf ("table_name = %s\n", table_name);
 #endif
 
-  sprintf (sql_buf, "select class_of, class_name from _db_class where class_name = \'%s\' and is_system_class != 1",
-	   table_name);
-
+  sprintf (sql_buf,
+	   "select class_of, class_name from _db_class where class_name = \'%s\' and is_system_class != 1", table_name);
 #if 0
   printf ("sql_buf = %s\n", sql_buf);
 #endif
@@ -2184,6 +2370,7 @@ int
 unregister_class_info (CUBRID_DATA_ITEM * data_item)
 {
   CLASS_INFO *class_info;
+
   int del_idx;
 
   int error_code;
@@ -2339,6 +2526,182 @@ update_class_info (CUBRID_DATA_ITEM * data_item)
     case 4:
 
       break;
+    default:
+      assert (0);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+is_extraction_class_oid (uint64_t class_oid)
+{
+  int is_found = 0;
+
+  for (int i = 0; i < helper_Gl.extraction_class_oid_count; i++)
+    {
+      if (helper_Gl.extraction_class_oid[i] == class_oid)
+	{
+	  is_found = 1;
+
+	  break;
+	}
+    }
+
+  return is_found;
+}
+
+int
+validate_class_oid_for_ddl (CUBRID_DATA_ITEM * data_item)
+{
+  int error_code;
+
+  switch (data_item->ddl.object_type)
+    {
+      // table
+    case 0:
+      if (!is_extraction_class_oid (data_item->ddl.classoid))
+	{
+	  error_code = YES_ERROR;
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      // index
+    case 1:
+      // serial
+    case 2:
+      // view
+    case 3:
+      // function
+    case 4:
+      // procedure
+    case 5:
+      // trigger
+    case 6:
+
+      break;
+
+    default:
+      assert (0);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+validate_class_oid_for_dml (CUBRID_DATA_ITEM * data_item)
+{
+  int error_code;
+
+  if (!is_extraction_class_oid (data_item->dml.classoid))
+    {
+      error_code = YES_ERROR;
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+validate_class_oid_of_log_item (CUBRID_LOG_ITEM * log_item)
+{
+  CUBRID_DATA_ITEM *data_item;
+
+  int error_code;
+
+  data_item = &log_item->data_item;
+
+  switch (log_item->data_item_type)
+    {
+      // DDL
+    case 0:
+      error_code = validate_class_oid_for_ddl (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      // DML
+    case 1:
+      error_code = validate_class_oid_for_dml (data_item);
+      if (error_code != NO_ERROR)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+    default:
+
+      break;
+    }
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+}
+
+int
+is_extraction_user_name (char *user_name)
+{
+  int is_found = 0;
+
+  for (int i = 0; i < helper_Gl.extraction_user_name_count; i++)
+    {
+      if (!strcmp (helper_Gl.extraction_user_name[i], user_name))
+	{
+	  is_found = 1;
+
+	  break;
+	}
+    }
+
+  return is_found;
+}
+
+int
+validate_user_name_of_log_item (CUBRID_LOG_ITEM * log_item)
+{
+  int error_code;
+
+  switch (log_item->data_item_type)
+    {
+      // DDL
+    case 0:
+      // DML
+    case 1:
+      // DCL
+    case 2:
+      if (!is_extraction_user_name (log_item->user))
+	{
+	  error_code = YES_ERROR;
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      break;
+
+      // TIMER
+    case 3:
+
+      break;
 
     default:
       assert (0);
@@ -2396,21 +2759,37 @@ extract_log (void)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  error_code = cubrid_log_set_extraction_table (NULL, 0);
-  if (error_code != CUBRID_LOG_SUCCESS)
+  if (helper_Gl.extraction_class_oid_count != 0)
     {
-      PRINT_ERRMSG_GOTO_ERR (error_code);
+      error_code =
+	cubrid_log_set_extraction_table (helper_Gl.extraction_class_oid, helper_Gl.extraction_class_oid_count);
+      if (error_code != CUBRID_LOG_SUCCESS)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
     }
 
-  error_code = cubrid_log_set_extraction_user (NULL, 0);
-  if (error_code != CUBRID_LOG_SUCCESS)
+  if (helper_Gl.extraction_user_name_count != 0)
     {
-      PRINT_ERRMSG_GOTO_ERR (error_code);
+#if 0
+      for (int i = 0; i < helper_Gl.extraction_user_name_count; i++)
+	{
+	  printf ("helper_Gl.extraction_user_name[i] = %s\n", helper_Gl.extraction_user_name[i]);
+	}
+#endif
+
+      error_code =
+	cubrid_log_set_extraction_user (helper_Gl.extraction_user_name, helper_Gl.extraction_user_name_count);
+      if (error_code != CUBRID_LOG_SUCCESS)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
     }
 
   error_code =
-    cubrid_log_connect_server (helper_Gl.cdc_server_ip, helper_Gl.cdc_server_port, helper_Gl.database_name,
-			       helper_Gl.dba_user, helper_Gl.dba_passwd);
+    cubrid_log_connect_server (helper_Gl.cdc_server_ip,
+			       helper_Gl.cdc_server_port,
+			       helper_Gl.database_name, helper_Gl.dba_user, helper_Gl.dba_passwd);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -2442,6 +2821,7 @@ extract_log (void)
 
 #if 0
 	printf ("[PASS] cubrid_log_extract ()\n");
+
 	printf ("list_size: %d\n", list_size);
 #endif
 
@@ -2449,6 +2829,24 @@ extract_log (void)
 
 	while (log_item != NULL)
 	  {
+	    if (helper_Gl.extraction_class_oid_count != 0)
+	      {
+		error_code = validate_class_oid_of_log_item (log_item);
+		if (error_code != NO_ERROR)
+		  {
+		    PRINT_ERRMSG_GOTO_ERR (error_code);
+		  }
+	      }
+
+	    if (helper_Gl.extraction_user_name_count != 0)
+	      {
+		error_code = validate_user_name_of_log_item (log_item);
+		if (error_code != NO_ERROR)
+		  {
+		    PRINT_ERRMSG_GOTO_ERR (error_code);
+		  }
+	      }
+
 	    error_code = print_log_item (log_item);
 	    if (error_code != NO_ERROR)
 	      {
