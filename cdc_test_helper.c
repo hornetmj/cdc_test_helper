@@ -2333,11 +2333,29 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
   char sql_buf[10000] = { '\0', };
   char table_name[100] = { '\0', };
 
+  char *sql_buf_p = NULL;
+  int ddl_stmt_len;
+
   int error_code;
 
-  strcpy (sql_buf, data_item->ddl.statement);
+  ddl_stmt_len = strlen (data_item->ddl.statement);
 
-  error_code = find_table_name (sql_buf, table_name);
+  if (ddl_stmt_len < 10000)
+    {
+      sql_buf_p = sql_buf;
+    }
+  else
+    {
+      sql_buf_p = (char *) malloc (sizeof (char) * (ddl_stmt_len + 1));
+      if (sql_buf_p == NULL)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+    }
+
+  strcpy (sql_buf_p, data_item->ddl.statement);
+
+  error_code = find_table_name (sql_buf_p, table_name);
   if (error_code != NO_ERROR)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -2347,21 +2365,32 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
   printf ("table_name = %s\n", table_name);
 #endif
 
-  sprintf (sql_buf,
+  sprintf (sql_buf_p,
 	   "select class_of, class_name from _db_class where class_name = \'%s\' and is_system_class != 1", table_name);
+
 #if 0
-  printf ("sql_buf = %s\n", sql_buf);
+  printf ("sql_buf_p = %s\n", sql_buf_p);
 #endif
 
-  error_code = fetch_schema_info (sql_buf);
+  error_code = fetch_schema_info (sql_buf_p);
   if (error_code != NO_ERROR)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
+  if (sql_buf_p != sql_buf)
+    {
+      free (sql_buf_p);
+    }
+
   return NO_ERROR;
 
 error:
+
+  if (sql_buf_p != NULL && sql_buf_p != sql_buf)
+    {
+      free (sql_buf_p);
+    }
 
   return YES_ERROR;
 }
