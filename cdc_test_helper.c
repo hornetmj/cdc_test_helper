@@ -606,6 +606,10 @@ fetch_schema_info (char *query)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
+#if 0
+  printf ("exec_retval=%d\n", exec_retval);
+#endif
+
   // class info
   while (1)
     {
@@ -2409,6 +2413,8 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
     {
       goto end;
     }
+
+  assert (class_info->class_name != NULL);
 
   free (class_info->class_name);
 
