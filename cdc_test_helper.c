@@ -2307,10 +2307,10 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
 	}
     }
 
-  s = strstr (sql_buf, " table ");
+  s = strstr (sql_buf, "table");
   if (s == NULL)
     {
-      s = strstr (sql_buf, " class ");
+      s = strstr (sql_buf, "class");
       if (s == NULL)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -2338,18 +2338,17 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
   s = e + 1;
   e = s;
 
-  s = strstr (e, " as ");
-
+  s = strstr (e, "as");
   if (s == NULL)
     {
-      s = strstr (e, " to ");
+      s = strstr (e, "to");
       if (s == NULL)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
     }
 
-  s = s + 2;			// skipping 'as ' or 'to '
+  s = s + 3;			// skipping 'as ' or 'to '
 
   while (*s == ' ')
     {
