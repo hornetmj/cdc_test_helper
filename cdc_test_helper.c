@@ -652,6 +652,13 @@ fetch_schema_info (char *query)
 
       class_oid_2 = convert_class_oid_to_uint64 (class_oid);
 
+      if (class_oid_2 == 0)
+	{
+	  // Legacy server bug. The class_oid is null value in spite of the class_name is not null value.
+	  // This is a problem that should never happen.
+	  break;
+	}
+
 #if 0
       printf ("class_name: %s, class_oid: %s, class_oid_2: %lld\n", class_name, class_oid, class_oid_2);
 #endif
