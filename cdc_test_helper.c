@@ -662,6 +662,11 @@ fetch_schema_info (char *query)
 
       class_info_Gl.class_info_count++;
 
+#if 0
+      printf ("[INC: %d] class_name=%s, class_oid=%lld (%s) from _db_class\n", class_info_Gl.class_info_count,
+	      class_name, class_oid_2, class_oid);
+#endif
+
       error_code = make_class_info (cur_class_info, class_name, class_oid_2);
       if (error_code != NO_ERROR)
 	{
@@ -2407,6 +2412,11 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
   printf ("sql_buf_p = %s\n", sql_buf_p);
 #endif
 
+#if 0
+  printf ("[REGISTER] [%s] class_name=%s, class_oid=%lld from data_item\n",
+	  convert_ddl_type_to_string (data_item->ddl.ddl_type), table_name, data_item->ddl.classoid);
+#endif
+
   error_code = fetch_schema_info (sql_buf_p);
   if (error_code != NO_ERROR)
     {
@@ -2419,8 +2429,17 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
     }
 
 #if 0
-  printf ("[%s] [%s] class_name=%s, class_info_Gl.class_info_count=%d\n", __func__,
-	  convert_ddl_type_to_string (data_item->ddl.ddl_type), table_name, class_info_Gl.class_info_count);
+  if (class_info_Gl.class_info_count >= 4)
+    {
+      printf ("[%s] [%s] class_name=%s, class_info_Gl.class_info_count=%d\n\n", __func__,
+	      convert_ddl_type_to_string (data_item->ddl.ddl_type), table_name, class_info_Gl.class_info_count);
+
+      for (int i = 0; i < class_info_Gl.class_info_count; i++)
+	{
+	  printf ("class_info_Gl.class_info[%d].class_name=%s, class_info_Gl.class_info[%d].class_oid=%lld\n", i,
+		  class_info_Gl.class_info[i].class_name, i, class_info_Gl.class_info[i].class_oid);
+	}
+    }
 #endif
 
   return NO_ERROR;
@@ -2444,21 +2463,26 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
 
   int error_code;
 
+  assert (data_item->ddl.classoid != 0);
+
   class_info = find_class_info (data_item->ddl.classoid);
   if (class_info == NULL)
     {
       goto end;
     }
 
+#if 0
+  printf ("[UN-REGISTER] [%s] class_name=%s, class_oid=%lld from class_info, class_oid=%lld from data_item\n",
+	  convert_ddl_type_to_string (data_item->ddl.ddl_type), class_info->class_name, class_info->class_oid,
+	  data_item->ddl.classoid);
+
+  printf ("[DEC: %d]\n", class_info_Gl.class_info_count - 1);
+#endif
+
   assert (class_info->class_name != NULL);
 
 #if 0
   printf ("class_info->class_name=%s\n", class_info->class_name);
-#endif
-
-#if 0
-  printf ("[%s] [%s] class_name=%s, ", __func__, convert_ddl_type_to_string (data_item->ddl.ddl_type),
-	  class_info->class_name);
 #endif
 
   free (class_info->class_name);
@@ -2491,13 +2515,27 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
 
   class_info_Gl.class_info_count--;
 
-#if 0
-  printf (" class_info_Gl.class_info_count=%d\n", class_info_Gl.class_info_count);
-#endif
-
   assert (class_info_Gl.class_info_count >= 0);
 
 end:
+
+#if 0
+  printf ("[%s] [%s] class_name=%s (class_oid=%lld) (data_item class_oid=%lld), ", __func__,
+	  convert_ddl_type_to_string (data_item->ddl.ddl_type),
+	  class_info != NULL ? class_info->class_name : "Not found class info",
+	  class_info != NULL ? class_info->class_oid : -1, data_item->ddl.classoid);
+
+  if (class_info != NULL)
+    {
+      free (class_info->class_name);
+
+      class_info->class_name = NULL;
+    }
+#endif
+
+#if 0
+  printf (" class_info_Gl.class_info_count=%d\n", class_info_Gl.class_info_count);
+#endif
 
   return NO_ERROR;
 
