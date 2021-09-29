@@ -63,6 +63,7 @@ struct helper_global
   int print_log_item;
   int print_timer;
   int print_transaction;
+  int disable_print_sql;
 
   int connection_timeout;
   int extraction_timeout;
@@ -173,6 +174,7 @@ init_helper_global (void)
   helper_Gl.print_log_item = 0;
   helper_Gl.print_timer = 0;
   helper_Gl.print_transaction = 0;
+  helper_Gl.disable_print_sql = 0;
 
   helper_Gl.cci_conn_handle = -1;
   helper_Gl.target_conn_handle = -1;
@@ -432,6 +434,11 @@ process_command_line_option (int argc, char *argv[])
 	{
 	  helper_Gl.print_transaction = 1;
 	}
+      else if (strncmp (argv[i], "--disable-print-sql", strlen ("--disable-print-sql")) == 0)
+	{
+	  // For debug, HIDDEN.
+	  helper_Gl.disable_print_sql = 1;
+	}
       else
 	{
 	  if (i == argc - 1)
@@ -607,6 +614,7 @@ fetch_schema_info (char *query)
     }
 
 #if 0
+  printf ("query=%s\n", query);
   printf ("exec_retval=%d\n", exec_retval);
 #endif
 
@@ -1133,12 +1141,35 @@ find_class_info (uint64_t class_oid)
 {
   CLASS_INFO *class_info;
 
+#if 0
+  if (class_info_Gl.class_info_count >= 3)
+    {
+      printf ("class_info_Gl.class_info_count=%d\n", class_info_Gl.class_info_count);
+
+      for (int i = 0; i < class_info_Gl.class_info_count; i++)
+	{
+	  class_info = &class_info_Gl.class_info[i];
+
+	  printf ("class_info->class_name=%s\n", class_info->class_name);
+	  printf ("class_info->class_oid=%lld\n\n", class_info->class_oid);
+	}
+
+      printf ("class_oid=%lld\n", class_oid);
+    }
+#endif
+
+  assert (class_oid != 0);
+
   for (int i = 0; i < class_info_Gl.class_info_count; i++)
     {
       class_info = &class_info_Gl.class_info[i];
 
       if (class_info->class_oid == class_oid)
 	{
+#if 0
+	  printf ("i=%d\n", i);
+#endif
+
 	  return class_info;
 	}
     }
@@ -2147,7 +2178,7 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       assert (0);
     }
 
-  if (log_item->data_item_type != 3)
+  if (log_item->data_item_type != 3 && helper_Gl.disable_print_sql != 1)
     {
       printf ("=====================================================================================\n");
       printf ("[SQL]\n");
@@ -2387,6 +2418,11 @@ register_class_info (CUBRID_DATA_ITEM * data_item)
       free (sql_buf_p);
     }
 
+#if 0
+  printf ("[%s] [%s] class_name=%s, class_info_Gl.class_info_count=%d\n", __func__,
+	  convert_ddl_type_to_string (data_item->ddl.ddl_type), table_name, class_info_Gl.class_info_count);
+#endif
+
   return NO_ERROR;
 
 error:
@@ -2416,11 +2452,24 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
 
   assert (class_info->class_name != NULL);
 
+#if 0
+  printf ("class_info->class_name=%s\n", class_info->class_name);
+#endif
+
+#if 0
+  printf ("[%s] [%s] class_name=%s, ", __func__, convert_ddl_type_to_string (data_item->ddl.ddl_type),
+	  class_info->class_name);
+#endif
+
   free (class_info->class_name);
+
+  class_info->class_name = NULL;
 
   for (int i = 0; i < class_info->attr_info_count; i++)
     {
       free (class_info->attr_info_p[i].attr_name);
+
+      class_info->attr_info_p[i].attr_name = NULL;
     }
 
   class_info->attr_info_count = 0;
@@ -2441,6 +2490,10 @@ unregister_class_info (CUBRID_DATA_ITEM * data_item)
     }
 
   class_info_Gl.class_info_count--;
+
+#if 0
+  printf (" class_info_Gl.class_info_count=%d\n", class_info_Gl.class_info_count);
+#endif
 
   assert (class_info_Gl.class_info_count >= 0);
 
