@@ -2086,6 +2086,8 @@ apply_target_db (int tran_id)
       req_handle = cci_prepare_and_execute (conn_handle, tran->sql_list[i], 0, &exec_retval, &err_buf);
       if (req_handle < 0)
 	{
+	  printf ("[ERROR] [cci] req_handle=%d, err_code=%d, err_msg=%s\n", req_handle, err_buf.err_code,
+		  err_buf.err_msg);
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
