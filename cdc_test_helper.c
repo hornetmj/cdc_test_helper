@@ -2079,7 +2079,7 @@ apply_target_db (int tran_id)
 
   for (int i = 0; i < tran->sql_count; i++)
     {
-#if 0
+#if 1
       printf ("tran->sql_list[%d]: %s\n", i, tran->sql_list[i]);
 #endif
 
