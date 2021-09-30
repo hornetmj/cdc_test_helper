@@ -31,6 +31,8 @@ enum
   BIT = 23,
   VARBIT = 24,
   CHAR = 25,
+  NCHAR = 26,
+  VARNCHAR = 27,
   BIGINT = 31,
   DATETIME = 32,
   BLOB = 33,
@@ -1315,6 +1317,8 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 	  break;
 
 	case NUMERIC:
+	case BIT:
+	case VARBIT:
 	  {
 	    char *value;
 
@@ -1325,9 +1329,9 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	  break;
 
-	case BIT:
-	case VARBIT:
 	case CHAR:
+	case NCHAR:
+	case VARNCHAR:
 	  {
 	    char *value;
 
@@ -1501,6 +1505,8 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 	  break;
 
 	case NUMERIC:
+	case BIT:
+	case VARBIT:
 	  {
 	    char *value;
 
@@ -1511,9 +1517,9 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	  break;
 
-	case BIT:
-	case VARBIT:
 	case CHAR:
+	case NCHAR:
+	case VARNCHAR:
 	  {
 	    char *value;
 
