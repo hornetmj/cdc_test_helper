@@ -2404,7 +2404,7 @@ find_new_table_name (char *sql_buf, char *old_table_name, char *new_table_name)
 
   e = s;
 
-  while (*e != ' ')
+  while (*e != ' ' && *e != '\0')
     {
       e++;
     }
