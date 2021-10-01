@@ -1275,7 +1275,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1297,7 +1297,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1324,7 +1324,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "%s", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx], "%s", value);
 	  }
 
 	  break;
@@ -1337,7 +1337,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1362,7 +1362,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1383,7 +1383,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.changed_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1464,7 +1464,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1486,7 +1486,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1512,7 +1512,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "%s", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx], "%s", value);
 	  }
 
 	  break;
@@ -1525,7 +1525,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1549,7 +1549,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
@@ -1570,7 +1570,7 @@ process_cond_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	    value = data_item->dml.cond_column_data[col_idx];
 
-	    sprintf (sql_buf + strlen (sql_buf), "\'%s\'", value);
+	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.cond_column_data_len[col_idx] + 3, "\'%s\'", value);
 	  }
 
 	  break;
