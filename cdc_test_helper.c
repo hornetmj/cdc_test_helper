@@ -697,7 +697,7 @@ fetch_schema_info (char *query)
 
 	req_handle_2 =
 	  cci_prepare (conn_handle,
-		       "select distinct a.attr_name, a.def_order, a.data_type, (select prec from _db_domain d where d in a.domains) as prec, a.is_nullable, max((case when a.attr_name in (select key_attr_name from _db_index_key k where k in b.key_attrs) and b.is_primary_key = 1 then 1 else 0 end)) as is_primary_key from _db_attribute a left outer join _db_index b on a.class_of = b.class_of where a.class_of.is_system_class != 1 and a.class_of.class_name = ? group by a.attr_name, a.def_order",
+		       "select distinct a.attr_name, a.def_order, a.data_type, (select prec from _db_domain d where d in a.domains) as prec, a.is_nullable, max((case when a.attr_name in (select key_attr_name from _db_index_key k where k in b.key_attrs) and b.is_primary_key = 1 then 1 else 0 end)) as is_primary_key from _db_attribute a left outer join _db_index b on a.class_of = b.class_of where a.class_of.is_system_class != 1 and a.class_of.class_name = ? group by a.attr_name order by def_order",
 		       0, &err_buf);
 	if (req_handle_2 < 0)
 	  {
@@ -1636,6 +1636,17 @@ make_insert_stmt (CUBRID_DATA_ITEM * data_item, char **sql)
 	  strcat (sql_buf, ") values (");
 	}
     }
+
+#if 0
+  for (i = 0; i < data_item->dml.num_changed_column; i++)
+    {
+      attr_info = &class_info->attr_info_p[i];
+
+      printf ("attr_info->def_order=%d, data_item->dml.changed_column_index[%d]=%d\n", attr_info->def_order, i,
+	      data_item->dml.changed_column_index[i]);
+    }
+#endif
+
 
   for (i = 0; i < data_item->dml.num_changed_column; i++)
     {
