@@ -2265,17 +2265,21 @@ find_table_name (char *sql_buf, char *table_name)
 	}
     }
 
-  s = strstr (sql_buf, " table ");
+  s = strstr (sql_buf, "table");
   if (s == NULL)
     {
-      s = strstr (sql_buf, " class ");
-      if (s == NULL)
-	{
-	  PRINT_ERRMSG_GOTO_ERR (error_code);
-	}
+      s = strstr (sql_buf, "class");
     }
 
-  s = s + 6;			// skipping 'table ' or 'class '
+  if (s != NULL)
+    {
+      s = s + 6;		// skipping 'table ' or 'class '
+    }
+  else
+    {
+      s = strstr (sql_buf, " ");	// in the case of 'ALTER ddl_0001 drop col8;'
+    }
+
   while (*s == ' ')
     {
       s++;
@@ -2291,6 +2295,10 @@ find_table_name (char *sql_buf, char *table_name)
   *e = '\0';
 
   strcpy (table_name, s);
+
+#if 0
+  printf ("table_name=%s\n", table_name);
+#endif
 
   return NO_ERROR;
 
