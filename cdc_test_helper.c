@@ -582,6 +582,8 @@ fetch_schema_info (char *query)
   CLASS_INFO *cur_class_info = NULL;
   ATTR_INFO *cur_attr_info = NULL;
 
+  char cci_url[1024] = { '\0', };
+
   int error_code;
 
 #if 0
@@ -594,11 +596,22 @@ fetch_schema_info (char *query)
 
   if (helper_Gl.cci_conn_handle == -1)
     {
+#if 1
+      snprintf (cci_url, 1024,
+		"cci:cubrid:%s:%d:%s:::?logOnException=true&logSlowQueries=true&logTraceApi=true&logTraceNetwork=true&logFile=cci_debug.log&logBaseDir=%s",
+		helper_Gl.broker_ip, helper_Gl.broker_port, helper_Gl.database_name, ".");
+
+      conn_handle = cci_connect_with_url_ex (cci_url, helper_Gl.dba_user, helper_Gl.dba_passwd, &err_buf);
+#else
       conn_handle =
 	cci_connect (helper_Gl.broker_ip, helper_Gl.broker_port, helper_Gl.database_name, helper_Gl.dba_user,
 		     helper_Gl.dba_passwd);
+#endif
       if (conn_handle < 0)
 	{
+	  printf ("[ERROR] [cci] conn_handle=%d, err_code=%d, err_msg=%s\n", conn_handle, err_buf.err_code,
+		  err_buf.err_msg);
+
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
@@ -637,6 +650,9 @@ fetch_schema_info (char *query)
       error_code = cci_fetch (req_handle, &err_buf);
       if (error_code < 0)
 	{
+	  printf ("[ERROR] [cci] req_handle=%d, err_code=%d, err_msg=%s\n", req_handle, err_buf.err_code,
+		  err_buf.err_msg);
+
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
@@ -1348,6 +1364,11 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 	    value = data_item->dml.changed_column_data[col_idx];
 
 	    snprintf (sql_buf + strlen (sql_buf), data_item->dml.changed_column_data_len[col_idx] + 1, "%s", value);
+
+#if 0
+	    printf ("value=%s\n", value);
+	    printf ("sql_buf=%s\n", sql_buf);
+#endif
 	  }
 
 	  break;
@@ -2071,6 +2092,8 @@ apply_target_db (int tran_id)
 
   TRAN *tran;
 
+  char cci_url[1024] = { '\0', };
+
   int error_code;
 
 #if 0
@@ -2083,11 +2106,22 @@ apply_target_db (int tran_id)
 
   if (helper_Gl.target_conn_handle == -1)
     {
+#if 1
+      snprintf (cci_url, 1024,
+		"cci:cubrid:%s:%d:%s:::?logOnException=true&logSlowQueries=true&logTraceApi=true&logTraceNetwork=true&logFile=cci_debug_target_server.log&logBaseDir=%s",
+		helper_Gl.target_server_ip, helper_Gl.target_server_port, helper_Gl.target_database_name, ".");
+
+      conn_handle = cci_connect_with_url_ex (cci_url, helper_Gl.dba_user, helper_Gl.dba_passwd, &err_buf);
+#else
       conn_handle =
 	cci_connect (helper_Gl.target_server_ip, helper_Gl.target_server_port,
 		     helper_Gl.target_database_name, helper_Gl.dba_user, helper_Gl.dba_passwd);
+#endif
       if (conn_handle < 0)
 	{
+	  printf ("[ERROR] [cci] conn_handle=%d, err_code=%d, err_msg=%s\n", conn_handle, err_buf.err_code,
+		  err_buf.err_msg);
+
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
