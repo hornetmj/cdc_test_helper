@@ -67,6 +67,8 @@ struct helper_global
   int print_transaction;
   int disable_print_sql;
 
+  int ignore_trigger_dml;
+
   int connection_timeout;
   int extraction_timeout;
   int max_log_item;
@@ -178,6 +180,8 @@ init_helper_global (void)
   helper_Gl.print_transaction = 0;
   helper_Gl.disable_print_sql = 0;
 
+  helper_Gl.ignore_trigger_dml = 1;
+
   helper_Gl.cci_conn_handle = -1;
   helper_Gl.target_conn_handle = -1;
 }
@@ -217,6 +221,7 @@ print_usages (void)
   printf ("\t--print-log-item                           (default: disable)\n");
   printf ("\t--print-timer                              (default: disable)\n");
   printf ("\t--print-transaction                        (default: disable)\n");
+  printf ("\t--no-ignore-trigger-dml                    (default: disable)\n");
   printf ("\n");
   printf ("Caution:\n");
   printf
@@ -440,6 +445,10 @@ process_command_line_option (int argc, char *argv[])
 	{
 	  // For debug, HIDDEN.
 	  helper_Gl.disable_print_sql = 1;
+	}
+      else if (strncmp (argv[i], "--no-ignore-trigger-dml", strlen ("--no-ignore-trigger-dml")) == 0)
+	{
+	  helper_Gl.ignore_trigger_dml = 0;
 	}
       else
 	{
@@ -1021,10 +1030,22 @@ convert_dml_type_to_string (int dml_type)
     {
     case 0:
       return "insert";
+
     case 1:
       return "update";
+
     case 2:
       return "delete";
+
+    case 3:
+      return "insert by trigger";
+
+    case 4:
+      return "update by trigger";
+
+    case 5:
+      return "delete by trigger";
+
     default:
       assert (0);
     }
@@ -1054,6 +1075,8 @@ print_dml (CUBRID_DATA_ITEM * data_item)
       printf ("\tindex: %d, data_len: %d\n", data_item->dml.cond_column_index[i],
 	      data_item->dml.cond_column_data_len[i]);
     }
+
+  return NO_ERROR;
 }
 
 char *
@@ -1063,8 +1086,10 @@ convert_dcl_type_to_string (int dcl_type)
     {
     case 0:
       return "commit";
+
     case 1:
       return "rollback";
+
     default:
       assert (0);
     }
@@ -1084,16 +1109,42 @@ print_timer (CUBRID_DATA_ITEM * data_item)
 }
 
 int
+is_trigger_dml (int dml_type)
+{
+  switch (dml_type)
+    {
+    case 0:
+    case 1:
+    case 2:
+      return 0;
+
+    case 3:
+    case 4:
+    case 5:
+      return 1;
+
+    default:
+      assert (0);
+    }
+}
+
+int
 print_log_item (CUBRID_LOG_ITEM * log_item)
 {
   int error_code;
 
-  if (!helper_Gl.print_log_item)
+  if (helper_Gl.print_log_item == 0)
     {
       goto end;
     }
 
   if (helper_Gl.print_timer == 0 && log_item->data_item_type == 3)
+    {
+      goto end;
+    }
+
+  if (helper_Gl.ignore_trigger_dml && log_item->data_item_type == 1
+      && is_trigger_dml (log_item->data_item.dml.dml_type))
     {
       goto end;
     }
@@ -1932,16 +1983,19 @@ convert_dml (CUBRID_DATA_ITEM * data_item, char **sql)
   switch (data_item->dml.dml_type)
     {
     case 0:
+    case 3:			/* insert by trigger */
       error_code = make_insert_stmt (data_item, sql);
 
       break;
 
     case 1:
+    case 4:			/* update by trigger */
       error_code = make_update_stmt (data_item, sql);
 
       break;
 
     case 2:
+    case 5:			/* delete by trigger */
       error_code = make_delete_stmt (data_item, sql);
 
       break;
@@ -2226,16 +2280,23 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       break;
 
     case 1:
-      error_code = convert_dml (&log_item->data_item, &sql);
-      if (error_code != NO_ERROR)
+      if (helper_Gl.ignore_trigger_dml && is_trigger_dml (log_item->data_item.dml.dml_type))
 	{
-	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	  /* Nothing to do */
 	}
-
-      error_code = register_sql_to_tran (log_item->transaction_id, sql);
-      if (error_code != NO_ERROR)
+      else
 	{
-	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	  error_code = convert_dml (&log_item->data_item, &sql);
+	  if (error_code != NO_ERROR)
+	    {
+	      PRINT_ERRMSG_GOTO_ERR (error_code);
+	    }
+
+	  error_code = register_sql_to_tran (log_item->transaction_id, sql);
+	  if (error_code != NO_ERROR)
+	    {
+	      PRINT_ERRMSG_GOTO_ERR (error_code);
+	    }
 	}
 
       break;
@@ -2265,11 +2326,18 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 
   if (log_item->data_item_type != 3 && helper_Gl.disable_print_sql != 1)
     {
-      printf ("=====================================================================================\n");
-      printf ("[SQL]\n");
-      printf ("transaction_id: %d\n", log_item->transaction_id);
-      printf ("sql: %s\n", sql);
-      printf ("=====================================================================================\n\n");
+      if (helper_Gl.ignore_trigger_dml && is_trigger_dml (log_item->data_item.dml.dml_type))
+	{
+	  /* Nothing to do */
+	}
+      else
+	{
+	  printf ("=====================================================================================\n");
+	  printf ("[SQL]\n");
+	  printf ("transaction_id: %d\n", log_item->transaction_id);
+	  printf ("sql: %s\n", sql);
+	  printf ("=====================================================================================\n\n");
+	}
     }
 
   if (log_item->data_item_type == 2)
