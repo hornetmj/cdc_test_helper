@@ -26,6 +26,7 @@ enum
   TIME = 10,
   TIMESTAMP = 11,
   DATE = 12,
+  MONETARY = 13,
   SHORT = 18,
   NUMERIC = 22,
   BIT = 23,
@@ -1409,6 +1410,7 @@ process_changed_column (CUBRID_DATA_ITEM * data_item, int col_idx,
 
 	case NCHAR:
 	case VARNCHAR:
+	case MONETARY:
 	  {
 	    char *value;
 
@@ -3020,7 +3022,7 @@ extract_log (void)
   // dir path (".")
   // 0 ~ 2 (0)
   // 10 ~ 512 (8)
-  error_code = cubrid_log_set_tracelog ("./tracelog.err", 0, 8);
+  error_code = cubrid_log_set_tracelog ("./tracelog", 0, 8);
   if (error_code != CUBRID_LOG_SUCCESS)
     {
       PRINT_ERRMSG_GOTO_ERR (error_code);
