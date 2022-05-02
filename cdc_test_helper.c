@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <stdbool.h>
 
 #include "cas_cci.h"
 #include "cubrid_log.h"
@@ -137,6 +138,7 @@ struct tran
   int tran_id;
   char *sql_list[1000];
   int sql_count;
+  bool has_serial;
 };
 
 typedef struct tran_table_global TRAN_TABLE_GLOBAL;
@@ -2063,10 +2065,56 @@ find_or_alloc_tran (int tran_id)
       tran = &tran_table_Gl.tran_table[tran_table_Gl.tran_count];
       tran->tran_id = tran_id;
       tran->sql_count = 0;
+      tran->has_serial = false;
       tran_table_Gl.tran_count++;
     }
 
   return tran;
+}
+
+bool
+check_if_serial_in_tran (int tran_id, bool * has_serial)
+{
+  TRAN *tran;
+
+  int error_code;
+
+  tran = find_or_alloc_tran (tran_id);
+  if (tran == NULL)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  *has_serial = tran->has_serial;
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
+
+}
+
+int
+register_serial_to_tran (int tran_id)
+{
+  TRAN *tran;
+
+  int error_code;
+
+  tran = find_or_alloc_tran (tran_id);
+  if (tran == NULL)
+    {
+      PRINT_ERRMSG_GOTO_ERR (error_code);
+    }
+
+  tran->has_serial = true;
+
+  return NO_ERROR;
+
+error:
+
+  return YES_ERROR;
 }
 
 int
@@ -2209,13 +2257,21 @@ apply_target_db (int tran_id)
 	{
 	  printf ("[ERROR] [cci] req_handle=%d, err_code=%d, err_msg=%s\n", req_handle, err_buf.err_code,
 		  err_buf.err_msg);
-	  PRINT_ERRMSG_GOTO_ERR (error_code);
 	}
 
-      error_code = cci_close_req_handle (req_handle);
-      if (error_code < 0)
+      if (req_handle != CCI_ER_DBMS)
 	{
-	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	  /* CCI_ER_DBMS is transaction error, not a cci internal error (connection, timeout, ...)
+	   * SERIAL changes are required to be sent to target even if the transaction is aborted
+	   * But, if transaction is aborted by some transaction error (e.g. unique violation)
+	   * cci also returns a CCI_ER_DBMS error, and cdc_test_helper can be quitted.
+	   * So, cdc_test_helper is allowed to quit only if req_handle is not a CCI_ER_DBMS */
+
+	  error_code = cci_close_req_handle (req_handle);
+	  if (error_code < 0 && error_code != CCI_ER_DBMS)
+	    {
+	      PRINT_ERRMSG_GOTO_ERR (error_code);
+	    }
 	}
     }
 
@@ -2271,6 +2327,12 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       if (error_code != NO_ERROR)
 	{
 	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      if (log_item->data_item.ddl.object_type == 2)
+	{
+	  /* register serial in TRAN */
+	  register_serial_to_tran (log_item->transaction_id);
 	}
 
       error_code = register_sql_to_tran (log_item->transaction_id, sql);
@@ -2344,12 +2406,16 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 
   if (log_item->data_item_type == 2)
     {
+      bool has_serial = false;
+
+      (void) check_if_serial_in_tran (log_item->transaction_id, &has_serial);
+
       if (helper_Gl.print_transaction)
 	{
 	  print_sql_list_in_tran (log_item->transaction_id);
 	}
 
-      if (is_apply_target_db () && log_item->data_item.dcl.dcl_type == 0)
+      if (is_apply_target_db () && (has_serial || log_item->data_item.dcl.dcl_type == 0))
 	{
 	  error_code = apply_target_db (log_item->transaction_id);
 	  if (error_code != NO_ERROR)
