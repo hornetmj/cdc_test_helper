@@ -983,6 +983,10 @@ convert_ddl_type_to_string (int ddl_type)
       return "rename";
     case 4:
       return "truncate";
+    case 5:
+      return "grant";
+    case 6:
+      return "revoke";
     default:
       assert (0);
     }
@@ -1007,6 +1011,8 @@ convert_object_type_to_string (int object_type)
       return "procedure";
     case 6:
       return "trigger";
+    case 7:
+      return "user";
     default:
       assert (0);
     }
@@ -1208,6 +1214,8 @@ convert_ddl (CUBRID_DATA_ITEM * data_item, char **sql)
     case 2:
     case 3:
     case 4:
+    case 5:
+    case 6:
 
       break;
 
@@ -2390,7 +2398,8 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
 
   if (log_item->data_item_type != 3 && helper_Gl.disable_print_sql != 1)
     {
-      if (helper_Gl.ignore_trigger_dml && is_trigger_dml (log_item->data_item.dml.dml_type))
+      if (log_item->data_item_type == 1 && helper_Gl.ignore_trigger_dml
+	  && is_trigger_dml (log_item->data_item.dml.dml_type))
 	{
 	  /* Nothing to do */
 	}
@@ -2873,6 +2882,8 @@ update_class_info (CUBRID_DATA_ITEM * data_item)
 
       /* truncate */
     case 4:
+    case 5:
+    case 6:
 
       break;
     default:
@@ -2933,6 +2944,8 @@ validate_class_oid_for_ddl (CUBRID_DATA_ITEM * data_item)
     case 5:
       // trigger
     case 6:
+      // user
+    case 7:
 
       break;
 
