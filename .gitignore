@@ -1,0 +1,6 @@
+cdc_test_helper
+cci_debug.log
+csql.err
+tracelog/
+core.*
+*.c~
