@@ -1,9 +1,12 @@
 #include <assert.h>
+#include <errno.h>
+#include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
 #include <stdbool.h>
+#include <unistd.h>
 
 #include "cas_cci.h"
 #include "cubrid_log.h"
@@ -46,6 +49,13 @@ enum
   DATETIMELTZ = 39
 };
 
+enum
+{
+  OUTPUT_LOG_TYPE_ALL = -1,
+  OUTPUT_LOG_TYPE_DDL = 0,
+  OUTPUT_LOG_TYPE_DML = 1
+};
+
 typedef struct helper_global HELPER_GLOBAL;
 struct helper_global
 {
@@ -63,6 +73,7 @@ struct helper_global
   char *dba_user;
   char *dba_passwd;
   char *database_name;
+  char config_path[PATH_MAX];
 
   int print_log_item;
   int print_timer;
@@ -75,6 +86,14 @@ struct helper_global
   int extraction_timeout;
   int max_log_item;
   int all_in_cond;
+
+  time_t start_time;
+  int start_time_set;
+  uint64_t start_lsa;
+  int start_lsa_set;
+
+  long long max_log_items;
+  int output_log_type;
 
   char *extraction_table_name[100];
   int extraction_table_name_count;
@@ -161,6 +180,12 @@ init_helper_global (void)
   helper_Gl.extraction_timeout = 300;
   helper_Gl.max_log_item = 512;
   helper_Gl.all_in_cond = 0;
+  helper_Gl.start_time = 0;
+  helper_Gl.start_time_set = 0;
+  helper_Gl.start_lsa = 0;
+  helper_Gl.start_lsa_set = 0;
+  helper_Gl.max_log_items = 0;
+  helper_Gl.output_log_type = OUTPUT_LOG_TYPE_ALL;
 
   helper_Gl.extraction_table_name_count = 0;
   helper_Gl.extraction_class_oid_count = 0;
@@ -177,6 +202,7 @@ init_helper_global (void)
   helper_Gl.dba_user = NULL;
   helper_Gl.dba_passwd = NULL;
   helper_Gl.database_name = NULL;
+  helper_Gl.config_path[0] = '\0';
 
   helper_Gl.print_log_item = 0;
   helper_Gl.print_timer = 0;
@@ -204,32 +230,115 @@ init_tran_table_global (void)
 void
 print_usages (void)
 {
-  printf ("cdc_test_helper [<option_list>] database-name\n\n");
-  printf ("Available options:\n");
-  printf ("\t--cdc-server-ip=[IP Address]               (default: 127.0.0.1)\n");
-  printf ("\t--cdc-server-port=[Port Number]            (default: 1523)\n");
-  printf ("\t--cdc-connection-timeout=[-1 - 360]        (default: 300)\n");
-  printf ("\t--cdc-extraction-timeout=[-1 - 360]        (default: 300)\n");
-  printf ("\t--cdc-max-log-item=[1 - 1024]              (default: 512)\n");
-  printf ("\t--cdc-all-in-cond=[0|1]                    (default: 0)\n");
-  printf ("\t--cdc-extraction-table=[Table1,Table2,...] (default: all tables)\n");
-  printf ("\t--cdc-extraction-user=[User1,User2,...]    (default: all users)\n");
-  printf ("\t--broker-ip=[IP Address]                   (default: 127.0.0.1)\n");
-  printf ("\t--broker-port=[Port Number]                (default: 33000)\n");
-  printf ("\t--target-server-ip=[IP Address]            (default: none)\n");
-  printf ("\t--target-server-port=[Port Number]         (default: none)\n");
-  printf ("\t--target-database-name=[DB Name]           (default: none)\n");
-  printf ("\t--user=[DBA User]                          (default: dba)\n");
-  printf ("\t--password=[DBA Password]                  (default: NULL)\n");
-  printf ("\t--print-log-item                           (default: disable)\n");
-  printf ("\t--print-timer                              (default: disable)\n");
-  printf ("\t--print-transaction                        (default: disable)\n");
-  printf ("\t--no-ignore-trigger-dml                    (default: disable)\n");
-  printf ("\n");
-  printf ("Caution:\n");
-  printf
-    ("The --target-server-ip, --target-server-port, and --target-database-name options must all be set together or not.\n");
-  printf ("\n");
+  printf ("사용법: cdc_test_helper [옵션] [데이터베이스명]\n\n");
+  printf ("옵션:\n");
+  printf ("  -t, --start-time TIME    시작 시간(YYYY-MM-DD HH:MM:SS)\n");
+  printf ("  -l, --start-lsa LSA      시작 LSA(PAGEID|OFFSET)\n");
+  printf ("  -n, --max-log-items N    필터를 통과한 로그 N건 출력 후 종료\n");
+  printf ("  -m, --log-type TYPE      출력 종류: all, dml, ddl(기본값: all)\n");
+  printf ("  -T, --table TABLES       쉼표로 구분한 테이블 목록\n");
+  printf ("  -h, --help               도움말 출력\n\n");
+  printf ("설정 파일:\n");
+  printf ("  기본 설정 파일은 실행 파일 옆의 cdc_test_helper.conf입니다.\n");
+  printf ("  CDC_TEST_HELPER_CONF 환경변수로 다른 설정 파일을 지정할 수 있습니다.\n\n");
+  printf ("주의:\n");
+  printf ("  --start-time과 --start-lsa는 동시에 사용할 수 없습니다.\n");
+  printf ("  명령행 옵션은 설정 파일보다 우선합니다.\n");
+}
+
+int
+parse_start_time (const char *value, time_t * start_time)
+{
+  struct tm tm_value = { 0, };
+  struct tm verify_tm;
+  int year, month, day, hour, minute, second;
+  char trailing;
+
+  if (sscanf (value, "%d-%d-%d %d:%d:%d%c", &year, &month, &day, &hour, &minute, &second, &trailing) != 6)
+    {
+      return YES_ERROR;
+    }
+
+  tm_value.tm_year = year - 1900;
+  tm_value.tm_mon = month - 1;
+  tm_value.tm_mday = day;
+  tm_value.tm_hour = hour;
+  tm_value.tm_min = minute;
+  tm_value.tm_sec = second;
+  tm_value.tm_isdst = -1;
+
+  *start_time = mktime (&tm_value);
+  if (*start_time == (time_t) - 1 || localtime_r (start_time, &verify_tm) == NULL)
+    {
+      return YES_ERROR;
+    }
+
+  if (verify_tm.tm_year != year - 1900 || verify_tm.tm_mon != month - 1 || verify_tm.tm_mday != day
+      || verify_tm.tm_hour != hour || verify_tm.tm_min != minute || verify_tm.tm_sec != second)
+    {
+      return YES_ERROR;
+    }
+
+  return NO_ERROR;
+}
+
+void
+unpack_lsa (uint64_t packed_lsa, int64_t * pageid, short *offset)
+{
+  uint64_t pageid_bits = packed_lsa & 0x0000FFFFFFFFFFFFULL;
+
+  if ((pageid_bits & 0x0000800000000000ULL) != 0)
+    {
+      pageid_bits |= 0xFFFF000000000000ULL;
+    }
+
+  *pageid = (int64_t) pageid_bits;
+  *offset = (short) (packed_lsa >> 48);
+}
+
+int
+parse_start_lsa (const char *value, uint64_t * packed_lsa)
+{
+  long long pageid;
+  int offset;
+  char trailing;
+
+  if (sscanf (value, "%lld|%d%c", &pageid, &offset, &trailing) != 2)
+    {
+      return YES_ERROR;
+    }
+
+  if (pageid < 0 || pageid > 0x00007FFFFFFFFFFFLL || offset < 0 || offset > 0x7FFF)
+    {
+      return YES_ERROR;
+    }
+
+  *packed_lsa = ((uint64_t) (unsigned short) offset << 48) | ((uint64_t) pageid & 0x0000FFFFFFFFFFFFULL);
+
+  return NO_ERROR;
+}
+
+int
+parse_positive_long_long (const char *value, long long *result)
+{
+  char *end;
+  long long parsed_value;
+
+  if (value[0] == '\0')
+    {
+      return YES_ERROR;
+    }
+
+  errno = 0;
+  parsed_value = strtoll (value, &end, 10);
+  if (errno == ERANGE || *end != '\0' || parsed_value <= 0)
+    {
+      return YES_ERROR;
+    }
+
+  *result = parsed_value;
+
+  return NO_ERROR;
 }
 
 int
@@ -313,151 +422,459 @@ make_extraction_user_list (char *user_list)
 }
 
 int
-process_command_line_option (int argc, char *argv[])
+is_option_with_value (const char *argument, const char *long_option, const char *short_option)
 {
-  if (argc == 1)
+  size_t argument_length = strlen (argument);
+  size_t long_option_length = strlen (long_option);
+  size_t long_option_name_length =
+    long_option[long_option_length - 1] == '=' ? long_option_length - 1 : long_option_length;
+  size_t short_option_length = strlen (short_option);
+
+  return strncmp (argument, long_option, long_option_length) == 0
+    || (argument_length == long_option_name_length
+	&& strncmp (argument, long_option, long_option_name_length) == 0) || strcmp (argument, short_option) == 0
+    || (argument_length > short_option_length && strncmp (argument, short_option, short_option_length) == 0
+	&& argument[short_option_length] == '=');
+}
+
+char *
+get_option_value (int argc, char *argv[], int *index, const char *long_option, const char *short_option)
+{
+  char *argument = argv[*index];
+  size_t long_option_length = strlen (long_option);
+  size_t long_option_name_length =
+    long_option[long_option_length - 1] == '=' ? long_option_length - 1 : long_option_length;
+
+  if (strncmp (argument, long_option, long_option_length) == 0)
     {
-      goto print_usages;
+      return argument + long_option_length;
     }
 
+  if ((strlen (argument) == long_option_name_length
+       && strncmp (argument, long_option, long_option_name_length) == 0) || strcmp (argument, short_option) == 0)
+    {
+      if (*index + 1 >= argc)
+	{
+	  return NULL;
+	}
+
+      (*index)++;
+      return argv[*index];
+    }
+
+  return argument + strlen (short_option) + 1;
+}
+
+char *
+trim_whitespace (char *value)
+{
+  char *end;
+
+  while (*value == ' ' || *value == '\t' || *value == '\r' || *value == '\n')
+    {
+      value++;
+    }
+
+  end = value + strlen (value);
+  while (end > value && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n'))
+    {
+      end--;
+    }
+  *end = '\0';
+
+  return value;
+}
+
+int
+parse_config_integer (const char *value, int min_value, int max_value, int *result)
+{
+  char *end;
+  long parsed_value;
+
+  errno = 0;
+  parsed_value = strtol (value, &end, 10);
+  if (value[0] == '\0' || errno == ERANGE || *end != '\0' || parsed_value < min_value || parsed_value > max_value)
+    {
+      return YES_ERROR;
+    }
+
+  *result = (int) parsed_value;
+  return NO_ERROR;
+}
+
+int
+parse_config_boolean (const char *value, int *result)
+{
+  if (strcmp (value, "true") == 0 || strcmp (value, "1") == 0 || strcmp (value, "yes") == 0)
+    {
+      *result = 1;
+      return NO_ERROR;
+    }
+
+  if (strcmp (value, "false") == 0 || strcmp (value, "0") == 0 || strcmp (value, "no") == 0)
+    {
+      *result = 0;
+      return NO_ERROR;
+    }
+
+  return YES_ERROR;
+}
+
+void
+set_config_string (char **target, const char *value)
+{
+  if (*target != NULL)
+    {
+      free (*target);
+      *target = NULL;
+    }
+
+  if (value[0] != '\0')
+    {
+      *target = strdup (value);
+      assert (*target != NULL);
+    }
+}
+
+int
+set_config_value (const char *key, char *value)
+{
+  int bool_value;
+
+  if (strcmp (key, "database_name") == 0)
+    {
+      set_config_string (&helper_Gl.database_name, value);
+    }
+  else if (strcmp (key, "user") == 0)
+    {
+      set_config_string (&helper_Gl.dba_user, value);
+    }
+  else if (strcmp (key, "password") == 0)
+    {
+      set_config_string (&helper_Gl.dba_passwd, value);
+    }
+  else if (strcmp (key, "cdc_server_ip") == 0)
+    {
+      set_config_string (&helper_Gl.cdc_server_ip, value);
+    }
+  else if (strcmp (key, "cdc_server_port") == 0)
+    {
+      return parse_config_integer (value, 1, 65535, &helper_Gl.cdc_server_port);
+    }
+  else if (strcmp (key, "broker_ip") == 0)
+    {
+      set_config_string (&helper_Gl.broker_ip, value);
+    }
+  else if (strcmp (key, "broker_port") == 0)
+    {
+      return parse_config_integer (value, 1, 65535, &helper_Gl.broker_port);
+    }
+  else if (strcmp (key, "connection_timeout") == 0)
+    {
+      return parse_config_integer (value, -1, 360, &helper_Gl.connection_timeout);
+    }
+  else if (strcmp (key, "extraction_timeout") == 0)
+    {
+      return parse_config_integer (value, -1, 360, &helper_Gl.extraction_timeout);
+    }
+  else if (strcmp (key, "max_log_item") == 0)
+    {
+      return parse_config_integer (value, 1, 1024, &helper_Gl.max_log_item);
+    }
+  else if (strcmp (key, "all_in_cond") == 0)
+    {
+      return parse_config_boolean (value, &helper_Gl.all_in_cond);
+    }
+  else if (strcmp (key, "extraction_users") == 0)
+    {
+      if (value[0] != '\0' && make_extraction_user_list (value) != NO_ERROR)
+	{
+	  return YES_ERROR;
+	}
+    }
+  else if (strcmp (key, "target_server_ip") == 0)
+    {
+      set_config_string (&helper_Gl.target_server_ip, value);
+    }
+  else if (strcmp (key, "target_server_port") == 0)
+    {
+      if (value[0] == '\0')
+	{
+	  helper_Gl.target_server_port = 0;
+	}
+      else
+	{
+	  return parse_config_integer (value, 1, 65535, &helper_Gl.target_server_port);
+	}
+    }
+  else if (strcmp (key, "target_database_name") == 0)
+    {
+      set_config_string (&helper_Gl.target_database_name, value);
+    }
+  else if (strcmp (key, "print_sql") == 0)
+    {
+      if (parse_config_boolean (value, &bool_value) != NO_ERROR)
+	{
+	  return YES_ERROR;
+	}
+      helper_Gl.disable_print_sql = !bool_value;
+    }
+  else if (strcmp (key, "print_log_item") == 0)
+    {
+      return parse_config_boolean (value, &helper_Gl.print_log_item);
+    }
+  else if (strcmp (key, "print_timer") == 0)
+    {
+      return parse_config_boolean (value, &helper_Gl.print_timer);
+    }
+  else if (strcmp (key, "print_transaction") == 0)
+    {
+      return parse_config_boolean (value, &helper_Gl.print_transaction);
+    }
+  else if (strcmp (key, "ignore_trigger_dml") == 0)
+    {
+      return parse_config_boolean (value, &helper_Gl.ignore_trigger_dml);
+    }
+  else
+    {
+      return YES_ERROR;
+    }
+
+  return NO_ERROR;
+}
+
+int
+make_config_path (const char *program_name)
+{
+  const char *config_from_env = getenv ("CDC_TEST_HELPER_CONF");
+  char executable_path[PATH_MAX];
+  char *last_separator;
+  ssize_t path_length;
+
+  if (config_from_env != NULL && config_from_env[0] != '\0')
+    {
+      if (strlen (config_from_env) >= sizeof (helper_Gl.config_path))
+	{
+	  return YES_ERROR;
+	}
+      strcpy (helper_Gl.config_path, config_from_env);
+      return NO_ERROR;
+    }
+
+  path_length = readlink ("/proc/self/exe", executable_path, sizeof (executable_path) - 1);
+  if (path_length < 0)
+    {
+      if (realpath (program_name, executable_path) == NULL)
+	{
+	  return YES_ERROR;
+	}
+    }
+  else
+    {
+      executable_path[path_length] = '\0';
+    }
+
+  last_separator = strrchr (executable_path, '/');
+  if (last_separator == NULL)
+    {
+      return YES_ERROR;
+    }
+  *last_separator = '\0';
+
+  if (snprintf (helper_Gl.config_path, sizeof (helper_Gl.config_path), "%s/cdc_test_helper.conf", executable_path)
+      >= (int) sizeof (helper_Gl.config_path))
+    {
+      return YES_ERROR;
+    }
+
+  return NO_ERROR;
+}
+
+int
+load_configuration (const char *program_name)
+{
+  FILE *config_file;
+  char line[4096];
+  int line_number = 0;
+
+  if (make_config_path (program_name) != NO_ERROR)
+    {
+      printf ("[ERROR] Failed to resolve the configuration file path.\n");
+      return YES_ERROR;
+    }
+
+  config_file = fopen (helper_Gl.config_path, "r");
+  if (config_file == NULL)
+    {
+      printf ("[ERROR] Configuration file not found: %s\n", helper_Gl.config_path);
+      return YES_ERROR;
+    }
+
+  while (fgets (line, sizeof (line), config_file) != NULL)
+    {
+      char *content;
+      char *separator;
+      char *key;
+      char *value;
+
+      line_number++;
+      if (strchr (line, '\n') == NULL && !feof (config_file))
+	{
+	  printf ("[ERROR] Configuration line %d is too long.\n", line_number);
+	  fclose (config_file);
+	  return YES_ERROR;
+	}
+
+      content = trim_whitespace (line);
+      if (content[0] == '\0' || content[0] == '#' || content[0] == ';')
+	{
+	  continue;
+	}
+
+      separator = strchr (content, '=');
+      if (separator == NULL)
+	{
+	  printf ("[ERROR] Invalid configuration at %s:%d\n", helper_Gl.config_path, line_number);
+	  fclose (config_file);
+	  return YES_ERROR;
+	}
+
+      *separator = '\0';
+      key = trim_whitespace (content);
+      value = trim_whitespace (separator + 1);
+
+      if (set_config_value (key, value) != NO_ERROR)
+	{
+	  printf ("[ERROR] Invalid configuration '%s' at %s:%d\n", key, helper_Gl.config_path, line_number);
+	  fclose (config_file);
+	  return YES_ERROR;
+	}
+    }
+
+  if (ferror (config_file))
+    {
+      printf ("[ERROR] Failed to read configuration file: %s\n", helper_Gl.config_path);
+      fclose (config_file);
+      return YES_ERROR;
+    }
+
+  fclose (config_file);
+
+  helper_Gl.target_set_count = 0;
+  helper_Gl.target_set_count += helper_Gl.target_server_ip != NULL;
+  helper_Gl.target_set_count += helper_Gl.target_server_port > 0;
+  helper_Gl.target_set_count += helper_Gl.target_database_name != NULL;
+
+  return NO_ERROR;
+}
+
+int
+process_command_line_option (int argc, char *argv[])
+{
   init_helper_global ();
   init_class_info_global ();
   init_tran_table_global ();
 
-  // use the getopt() later.
+  if (argc == 1)
+    {
+      print_usages ();
+      exit (0);
+    }
+
   for (int i = 1; i < argc; i++)
     {
-      if (strncmp (argv[i], "--help", strlen ("--help")) == 0 || strncmp (argv[i], "-h", strlen ("-h")) == 0)
+      if (strcmp (argv[i], "--help") == 0 || strcmp (argv[i], "-h") == 0)
 	{
-	  goto print_usages;
+	  print_usages ();
+	  exit (0);
 	}
-      else if (strncmp (argv[i], "--cdc-server-ip=", strlen ("--cdc-server-ip=")) == 0)
-	{
-	  helper_Gl.cdc_server_ip = strdup (argv[i] + strlen ("--cdc-server-ip="));
-	}
-      else if (strncmp (argv[i], "--cdc-server-port=", strlen ("--cdc-server-port=")) == 0)
-	{
-	  helper_Gl.cdc_server_port = atoi (argv[i] + strlen ("--cdc-server-port="));
-	}
-      else if (strncmp (argv[i], "--cdc-connection-timeout=", strlen ("--cdc-connection-timeout=")) == 0)
-	{
-	  helper_Gl.connection_timeout = atoi (argv[i] + strlen ("--cdc-connection-timeout="));
+    }
 
-	  if (helper_Gl.connection_timeout < -1 || helper_Gl.connection_timeout > 360)
+  if (load_configuration (argv[0]) != NO_ERROR)
+    {
+      return YES_ERROR;
+    }
+
+  for (int i = 1; i < argc; i++)
+    {
+      if (is_option_with_value (argv[i], "--start-time=", "-t"))
+	{
+	  char *option_value = get_option_value (argc, argv, &i, "--start-time=", "-t");
+
+	  if (option_value == NULL || parse_start_time (option_value, &helper_Gl.start_time) != NO_ERROR)
+	    {
+	      goto print_usages;
+	    }
+
+	  helper_Gl.start_time_set = 1;
+	}
+      else if (is_option_with_value (argv[i], "--start-lsa=", "-l"))
+	{
+	  char *option_value = get_option_value (argc, argv, &i, "--start-lsa=", "-l");
+
+	  if (option_value == NULL || parse_start_lsa (option_value, &helper_Gl.start_lsa) != NO_ERROR)
+	    {
+	      goto print_usages;
+	    }
+
+	  helper_Gl.start_lsa_set = 1;
+	}
+      else if (is_option_with_value (argv[i], "--max-log-items=", "-n"))
+	{
+	  char *option_value = get_option_value (argc, argv, &i, "--max-log-items=", "-n");
+
+	  if (option_value == NULL || parse_positive_long_long (option_value, &helper_Gl.max_log_items) != NO_ERROR)
 	    {
 	      goto print_usages;
 	    }
 	}
-      else if (strncmp (argv[i], "--cdc-extraction-timeout=", strlen ("--cdc-extraction-timeout=")) == 0)
+      else if (is_option_with_value (argv[i], "--log-type=", "-m"))
 	{
-	  helper_Gl.extraction_timeout = atoi (argv[i] + strlen ("--cdc-extraction-timeout="));
+	  char *log_type = get_option_value (argc, argv, &i, "--log-type=", "-m");
 
-	  if (helper_Gl.extraction_timeout < -1 || helper_Gl.extraction_timeout > 360)
+	  if (log_type == NULL)
+	    {
+	      goto print_usages;
+	    }
+	  else if (strcmp (log_type, "all") == 0)
+	    {
+	      helper_Gl.output_log_type = OUTPUT_LOG_TYPE_ALL;
+	    }
+	  else if (strcmp (log_type, "dml") == 0)
+	    {
+	      helper_Gl.output_log_type = OUTPUT_LOG_TYPE_DML;
+	    }
+	  else if (strcmp (log_type, "ddl") == 0)
+	    {
+	      helper_Gl.output_log_type = OUTPUT_LOG_TYPE_DDL;
+	    }
+	  else
 	    {
 	      goto print_usages;
 	    }
 	}
-      else if (strncmp (argv[i], "--cdc-max-log-item=", strlen ("--cdc-max-log-item=")) == 0)
-	{
-	  helper_Gl.max_log_item = atoi (argv[i] + strlen ("--cdc-max-log-item="));
-
-	  if (helper_Gl.max_log_item < 1 || helper_Gl.max_log_item > 1024)
-	    {
-	      goto print_usages;
-	    }
-	}
-      else if (strncmp (argv[i], "--cdc-all-in-cond=", strlen ("--cdc-all-in-cond=")) == 0)
-	{
-	  helper_Gl.all_in_cond = atoi (argv[i] + strlen ("--cdc-all-in-cond="));
-
-	  if (helper_Gl.all_in_cond != 0 && helper_Gl.all_in_cond != 1)
-	    {
-	      goto print_usages;
-	    }
-	}
-      else if (strncmp (argv[i], "--cdc-extraction-table=", strlen ("--cdc-extraction-table=")) == 0)
+      else if (is_option_with_value (argv[i], "--table=", "-T"))
 	{
 	  char table_list[2048];
+	  char *option_value = get_option_value (argc, argv, &i, "--table=", "-T");
 
-	  assert (strlen (argv[i]) <= 2048);
+	  if (option_value == NULL || strlen (option_value) >= sizeof (table_list))
+	    {
+	      goto print_usages;
+	    }
 
-	  strcpy (table_list, argv[i] + strlen ("--cdc-extraction-table="));
+	  strcpy (table_list, option_value);
 
 	  if (NO_ERROR != make_extraction_table_list (table_list))
 	    {
 	      goto print_usages;
 	    }
 	}
-      else if (strncmp (argv[i], "--cdc-extraction-user=", strlen ("--cdc-extraction-user=")) == 0)
-	{
-	  char user_list[2048];
-
-	  assert (strlen (argv[i]) <= 2048);
-
-	  strcpy (user_list, argv[i] + strlen ("--cdc-extraction-user="));
-
-	  if (NO_ERROR != make_extraction_user_list (user_list))
-	    {
-	      goto print_usages;
-	    }
-	}
-      else if (strncmp (argv[i], "--broker-ip=", strlen ("--broker-ip=")) == 0)
-	{
-	  helper_Gl.broker_ip = strdup (argv[i] + strlen ("--broker-ip="));
-	}
-      else if (strncmp (argv[i], "--broker-port=", strlen ("--broker-port=")) == 0)
-	{
-	  helper_Gl.broker_port = atoi (argv[i] + strlen ("--broker-port="));
-	}
-      else if (strncmp (argv[i], "--target-server-ip=", strlen ("--target-server-ip=")) == 0)
-	{
-	  helper_Gl.target_server_ip = strdup (argv[i] + strlen ("--target-server-ip="));
-	  helper_Gl.target_set_count++;
-	}
-      else if (strncmp (argv[i], "--target-server-port=", strlen ("--target-server-port=")) == 0)
-	{
-	  helper_Gl.target_server_port = atoi (argv[i] + strlen ("--target-server-port="));
-	  helper_Gl.target_set_count++;
-	}
-      else if (strncmp (argv[i], "--target-database-name=", strlen ("--target-database-name=")) == 0)
-	{
-	  helper_Gl.target_database_name = strdup (argv[i] + strlen ("--target-database-name="));
-	  helper_Gl.target_set_count++;
-	}
-      else if (strncmp (argv[i], "--user=", strlen ("--user=")) == 0)
-	{
-	  helper_Gl.dba_user = strdup (argv[i] + strlen ("--user="));
-	}
-      else if (strncmp (argv[i], "--password=", strlen ("--password=")) == 0)
-	{
-	  helper_Gl.dba_passwd = strdup (argv[i] + strlen ("--password="));
-	}
-      else if (strncmp (argv[i], "--print-log-item", strlen ("--print-log-item")) == 0)
-	{
-	  helper_Gl.print_log_item = 1;
-	}
-      else if (strncmp (argv[i], "--print-timer", strlen ("--print-timer")) == 0)
-	{
-	  helper_Gl.print_timer = 1;
-	}
-      else if (strncmp (argv[i], "--print-transaction", strlen ("--print-transaction")) == 0)
-	{
-	  helper_Gl.print_transaction = 1;
-	}
-      else if (strncmp (argv[i], "--disable-print-sql", strlen ("--disable-print-sql")) == 0)
-	{
-	  // For debug, HIDDEN.
-	  helper_Gl.disable_print_sql = 1;
-	}
-      else if (strncmp (argv[i], "--no-ignore-trigger-dml", strlen ("--no-ignore-trigger-dml")) == 0)
-	{
-	  helper_Gl.ignore_trigger_dml = 0;
-	}
       else
 	{
-	  if (i == argc - 1)
+	  if (argv[i][0] != '-' && i == argc - 1)
 	    {
-	      helper_Gl.database_name = strdup (argv[argc - 1]);
+	      set_config_string (&helper_Gl.database_name, argv[i]);
 	    }
 	  else
 	    {
@@ -493,7 +910,19 @@ process_command_line_option (int argc, char *argv[])
   // all should be set together.
   if (helper_Gl.target_set_count > 0 && helper_Gl.target_set_count < 3)
     {
+      printf ("[ERROR] target_server_ip, target_server_port, and target_database_name must be set together.\n");
+      return YES_ERROR;
+    }
+
+  if (helper_Gl.start_time_set && helper_Gl.start_lsa_set)
+    {
       goto print_usages;
+    }
+
+  if (helper_Gl.database_name == NULL || helper_Gl.database_name[0] == '\0')
+    {
+      printf ("[ERROR] database_name must be set in %s or supplied as the last argument.\n", helper_Gl.config_path);
+      return YES_ERROR;
     }
 
   return NO_ERROR;
@@ -501,7 +930,7 @@ process_command_line_option (int argc, char *argv[])
 print_usages:
 
   print_usages ();
-  exit (0);
+  return YES_ERROR;
 }
 
 /*
@@ -1138,11 +1567,33 @@ is_trigger_dml (int dml_type)
 }
 
 int
-print_log_item (CUBRID_LOG_ITEM * log_item)
+should_output_log_item (CUBRID_LOG_ITEM * log_item)
+{
+  if (helper_Gl.output_log_type != OUTPUT_LOG_TYPE_ALL && helper_Gl.output_log_type != log_item->data_item_type)
+    {
+      return 0;
+    }
+
+  if (log_item->data_item_type == 3)
+    {
+      return helper_Gl.print_log_item && helper_Gl.print_timer;
+    }
+
+  if (helper_Gl.ignore_trigger_dml && log_item->data_item_type == 1
+      && is_trigger_dml (log_item->data_item.dml.dml_type))
+    {
+      return 0;
+    }
+
+  return 1;
+}
+
+int
+print_log_item (CUBRID_LOG_ITEM * log_item, int output_enabled)
 {
   int error_code;
 
-  if (helper_Gl.print_log_item == 0)
+  if (helper_Gl.print_log_item == 0 || output_enabled == 0)
     {
       goto end;
     }
@@ -2322,7 +2773,7 @@ unregister_tran (int tran_id)
 }
 
 int
-convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
+convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item, int output_enabled)
 {
   char *sql;
 
@@ -2396,7 +2847,7 @@ convert_log_item_to_sql (CUBRID_LOG_ITEM * log_item)
       assert (0);
     }
 
-  if (log_item->data_item_type != 3 && helper_Gl.disable_print_sql != 1)
+  if (output_enabled && log_item->data_item_type != 3 && helper_Gl.disable_print_sql != 1)
     {
       if (log_item->data_item_type == 1 && helper_Gl.ignore_trigger_dml
 	  && is_trigger_dml (log_item->data_item.dml.dml_type))
@@ -3080,7 +3531,17 @@ int
 extract_log (void)
 {
   time_t start_time;
+  time_t requested_start_time;
   uint64_t extract_lsa;
+
+  long long output_log_item_count = 0;
+  int extraction_complete = 0;
+
+  int64_t extract_pageid;
+  short extract_offset;
+
+  char requested_time_buf[32];
+  char resolved_time_buf[32];
 
   int error_code;
 
@@ -3157,12 +3618,34 @@ extract_log (void)
       PRINT_ERRMSG_GOTO_ERR (error_code);
     }
 
-  start_time = time (NULL);
-
-  error_code = cubrid_log_find_lsa (&start_time, &extract_lsa);
-  if (error_code != CUBRID_LOG_SUCCESS)
+  if (helper_Gl.start_lsa_set)
     {
-      PRINT_ERRMSG_GOTO_ERR (error_code);
+      extract_lsa = helper_Gl.start_lsa;
+      unpack_lsa (extract_lsa, &extract_pageid, &extract_offset);
+
+      printf ("[CDC_START] requested_lsa=%lld|%hd, raw_lsa=%llu\n", (long long) extract_pageid, extract_offset,
+	      (unsigned long long) extract_lsa);
+    }
+  else
+    {
+      start_time = helper_Gl.start_time_set ? helper_Gl.start_time : time (NULL);
+      requested_start_time = start_time;
+
+      error_code = cubrid_log_find_lsa (&start_time, &extract_lsa);
+      if (error_code != CUBRID_LOG_SUCCESS)
+	{
+	  PRINT_ERRMSG_GOTO_ERR (error_code);
+	}
+
+      strftime (requested_time_buf, sizeof (requested_time_buf), "%Y-%m-%d %H:%M:%S",
+		localtime (&requested_start_time));
+      strftime (resolved_time_buf, sizeof (resolved_time_buf), "%Y-%m-%d %H:%M:%S", localtime (&start_time));
+
+      unpack_lsa (extract_lsa, &extract_pageid, &extract_offset);
+
+      printf ("[CDC_START] requested_time=%s, resolved_time=%s, lsa=%lld|%hd, raw_lsa=%llu\n",
+	      requested_time_buf, resolved_time_buf, (long long) extract_pageid, extract_offset,
+	      (unsigned long long) extract_lsa);
     }
 
 #if 0
@@ -3191,6 +3674,8 @@ extract_log (void)
 
 	while (log_item != NULL)
 	  {
+	    int output_enabled;
+
 	    if (helper_Gl.extraction_class_oid_count != 0)
 	      {
 		error_code = validate_class_oid_of_log_item (log_item);
@@ -3209,13 +3694,15 @@ extract_log (void)
 		  }
 	      }
 
-	    error_code = print_log_item (log_item);
+	    output_enabled = should_output_log_item (log_item);
+
+	    error_code = print_log_item (log_item, output_enabled);
 	    if (error_code != NO_ERROR)
 	      {
 		PRINT_ERRMSG_GOTO_ERR (error_code);
 	      }
 
-	    error_code = convert_log_item_to_sql (log_item);
+	    error_code = convert_log_item_to_sql (log_item, output_enabled);
 	    if (error_code != NO_ERROR)
 	      {
 		PRINT_ERRMSG_GOTO_ERR (error_code);
@@ -3230,6 +3717,17 @@ extract_log (void)
 		  }
 	      }
 
+	    if (output_enabled)
+	      {
+		output_log_item_count++;
+
+		if (helper_Gl.max_log_items > 0 && output_log_item_count >= helper_Gl.max_log_items)
+		  {
+		    extraction_complete = 1;
+		    break;
+		  }
+	      }
+
 	    log_item = log_item->next;
 	  }
 
@@ -3238,8 +3736,15 @@ extract_log (void)
 	  {
 	    PRINT_ERRMSG_GOTO_ERR (error_code);
 	  }
+
+	if (extraction_complete)
+	  {
+	    break;
+	  }
       }
   }
+
+  printf ("[CDC_DONE] output_log_items=%lld\n", output_log_item_count);
 
   return NO_ERROR;
 
